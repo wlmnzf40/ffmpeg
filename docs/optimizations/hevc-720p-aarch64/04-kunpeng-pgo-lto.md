@@ -22,7 +22,9 @@ RGB24 NEON。通用 `-O3` 无法利用实际分支概率和调用频率。本优
    `-flto=32`。
 6. 两个阶段均使用 `--disable-shared --enable-static`，把 FFmpeg 自有库静态链接
    进可执行文件；训练及最终运行不再依赖 `LD_LIBRARY_PATH`。
-7. 安装到用户指定 prefix，并检查最终程序没有依赖 `libav*.so`、
+7. 静态 LTO 使用 `gcc-ar`、`gcc-ranlib` 和 `gcc-nm`，确保归档索引能够识别
+   GCC LTO object。
+8. 安装到用户指定 prefix，并检查最终程序没有依赖 `libav*.so`、
    `libswscale.so` 或 `libswresample.so`。
 
 脚本拒绝使用非空工作目录，避免误删或覆盖已有构建数据。线程数、LTO 分区数
@@ -31,6 +33,10 @@ RGB24 NEON。通用 `-O3` 无法利用实际分支概率和调用频率。本优
 这里的“静态”特指 FFmpeg 自有库静态链接。glibc、libm、libpthread 和 libgomp
 等系统运行库仍由系统动态提供，避免完全静态链接 glibc 带来的 NSS、DNS 和系统
 兼容性问题。
+
+如果训练已经完成、仅在第二阶段静态 LTO 链接失败，可以保留工作目录中的
+`profile/`，通过 `USE_EXISTING_PROFILE=1` 跳过 generation 和训练，直接重新执行
+profile-use 构建。
 
 ## 性能影响
 
@@ -60,4 +66,14 @@ tmux new-session -d -s LLM-ffmpeg-pgo \
 
 ```bash
 /root/ffmpeg-920b/pgo-install/bin/ffmpeg -version
+```
+
+复用已经生成的 profile，仅重跑第二阶段：
+
+```bash
+USE_EXISTING_PROFILE=1 JOBS=64 LTO_JOBS=32 \
+  bash tools/build_kunpeng_hevc_pgo.sh \
+  /root/ffmpeg-920b/HEVC-720p-10min.MOV \
+  /root/ffmpeg-920b/pgo-work \
+  /root/ffmpeg-920b/pgo-install
 ```

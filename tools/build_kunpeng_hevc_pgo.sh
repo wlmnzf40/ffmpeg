@@ -16,13 +16,28 @@ profileRoot="$workRoot/profile"
 jobs=${JOBS:-64}
 ltoJobs=${LTO_JOBS:-32}
 trainingFrames=${TRAINING_FRAMES:-15000}
+useExistingProfile=${USE_EXISTING_PROFILE:-0}
+gccAr=${GCC_AR:-$(command -v gcc-ar || true)}
+gccRanlib=${GCC_RANLIB:-$(command -v gcc-ranlib || true)}
+gccNm=${GCC_NM:-$(command -v gcc-nm || true)}
 
 if [ ! -f "$trainingVideo" ]; then
     echo "Training video does not exist: $trainingVideo" >&2
     exit 1
 fi
 
-if [ -e "$workRoot" ] && [ -n "$(find "$workRoot" -mindepth 1 -maxdepth 1 -print -quit)" ]; then
+if [ "$useExistingProfile" != 0 ] && [ "$useExistingProfile" != 1 ]; then
+    echo "USE_EXISTING_PROFILE must be 0 or 1" >&2
+    exit 1
+fi
+
+if [ -z "$gccAr" ] || [ -z "$gccRanlib" ] || [ -z "$gccNm" ]; then
+    echo "gcc-ar, gcc-ranlib and gcc-nm are required for static LTO" >&2
+    exit 1
+fi
+
+if [ "$useExistingProfile" -eq 0 ] && [ -e "$workRoot" ] && \
+        [ -n "$(find "$workRoot" -mindepth 1 -maxdepth 1 -print -quit)" ]; then
     echo "Work directory must be absent or empty: $workRoot" >&2
     exit 1
 fi
@@ -30,19 +45,24 @@ fi
 mkdir -p "$buildRoot" "$profileRoot" "$installPrefix"
 
 cd "$buildRoot"
-bash "$sourceRoot/configure" \
-    --prefix="$workRoot/generate-install" \
-    --disable-shared \
-    --enable-static \
-    --enable-pthreads \
-    --enable-gpl \
-    --extra-cflags="-fopenmp -O3 -mcpu=tsv110 -fprofile-generate=$profileRoot" \
-    --extra-ldflags="-fopenmp -fprofile-generate=$profileRoot"
-make -j"$jobs"
+if [ "$useExistingProfile" -eq 0 ]; then
+    bash "$sourceRoot/configure" \
+        --prefix="$workRoot/generate-install" \
+        --disable-shared \
+        --enable-static \
+        --enable-pthreads \
+        --enable-gpl \
+        --ar="$gccAr" \
+        --ranlib="$gccRanlib" \
+        --nm="$gccNm -g" \
+        --extra-cflags="-fopenmp -O3 -mcpu=tsv110 -fprofile-generate=$profileRoot" \
+        --extra-ldflags="-fopenmp -fprofile-generate=$profileRoot"
+    make -j"$jobs"
 
-"$buildRoot/ffmpeg_g" -v error -nostdin \
-    -i "$trainingVideo" -frames:v "$trainingFrames" -an -sn \
-    -vf format=rgb24 -f null - >/dev/null
+    "$buildRoot/ffmpeg_g" -v error -nostdin \
+        -i "$trainingVideo" -frames:v "$trainingFrames" -an -sn \
+        -vf format=rgb24 -f null - >/dev/null
+fi
 
 profileCount=$(find "$profileRoot" -type f -name '*.gcda' | wc -l)
 if [ "$profileCount" -eq 0 ]; then
@@ -50,13 +70,18 @@ if [ "$profileCount" -eq 0 ]; then
     exit 1
 fi
 
-make distclean
+if [ -f Makefile ]; then
+    make distclean
+fi
 bash "$sourceRoot/configure" \
     --prefix="$installPrefix" \
     --disable-shared \
     --enable-static \
     --enable-pthreads \
     --enable-gpl \
+    --ar="$gccAr" \
+    --ranlib="$gccRanlib" \
+    --nm="$gccNm -g" \
     --extra-cflags="-fopenmp -O3 -mcpu=tsv110 -fprofile-use=$profileRoot -fprofile-correction -Wno-missing-profile -flto=$ltoJobs" \
     --extra-ldflags="-fopenmp -fprofile-use=$profileRoot -fprofile-correction -flto=$ltoJobs"
 make -j"$jobs"
