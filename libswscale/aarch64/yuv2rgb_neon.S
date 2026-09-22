@@ -78,7 +78,12 @@
         load_dst1_dst2  40, 48, 56, 64
         sub             w3, w3, w0                                      // w3 = linesize  - width     (padding)
 .else
+.ifc \ofmt,rgb24
+        sub             w3, w3, w0                                      // w3 = linesize  - width * 3 (padding)
+        sub             w3, w3, w0, lsl #1
+.else
         sub             w3, w3, w0, lsl #2                              // w3 = linesize  - width * 4 (padding)
+.endif
 .endif
         sub             w5, w5, w0                                      // w5 = linesizeY - width     (paddingY)
         sub             w7,  w7,  w0, lsr #1                            // w7  = linesizeU - width / 2 (paddingU)
@@ -220,14 +225,23 @@ function ff_\ifmt\()_to_\ofmt\()_neon, export=1
         compute_rgba    v6.8b,v5.8b,v4.8b,v7.8b, v18.8b,v17.8b,v16.8b,v19.8b
 .endif
 
+.ifc \ofmt,rgb24
+        compute_rgb     v4.8b,v5.8b,v6.8b, v16.8b,v17.8b,v18.8b
+.endif
+
 .ifc \ofmt,gbrp
         compute_rgb     v18.8b,v4.8b,v6.8b, v19.8b,v5.8b,v7.8b
         st1             {  v4.8b,  v5.8b }, [x2],  #16
         st1             {  v6.8b,  v7.8b }, [x10], #16
         st1             { v18.8b, v19.8b }, [x15], #16
 .else
+.ifc \ofmt,rgb24
+        st3             { v4.8b, v5.8b, v6.8b }, [x2], #24
+        st3             {v16.8b,v17.8b,v18.8b }, [x2], #24
+.else
         st4             { v4.8b, v5.8b, v6.8b, v7.8b}, [x2], #32
         st4             {v16.8b,v17.8b,v18.8b,v19.8b}, [x2], #32
+.endif
 .endif
         subs            w8, w8, #16                                     // width -= 16
         b.gt            2b
@@ -257,3 +271,4 @@ declare_rgb_funcs nv12
 declare_rgb_funcs nv21
 declare_rgb_funcs yuv420p
 declare_rgb_funcs yuv422p
+declare_func yuv420p, rgb24

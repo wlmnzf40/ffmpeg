@@ -90,6 +90,7 @@ DECLARE_FF_YUVX_TO_GBRP_FUNCS(yuvx, gbrp)                                       
 
 DECLARE_FF_YUVX_TO_ALL_RGBX_FUNCS(yuv420p)
 DECLARE_FF_YUVX_TO_ALL_RGBX_FUNCS(yuv422p)
+DECLARE_FF_YUVX_TO_RGBX_FUNCS(yuv420p, rgb24)
 
 #define DECLARE_FF_NVX_TO_RGBX_FUNCS(ifmt, ofmt)                                            \
 int ff_##ifmt##_to_##ofmt##_neon(int w, int h,                                              \
@@ -202,6 +203,7 @@ static void get_unscaled_swscale_neon(SwsContext *c) {
     SET_FF_NVX_TO_ALL_RGBX_FUNC(nv21, NV21, accurate_rnd);
     SET_FF_NVX_TO_ALL_RGBX_FUNC(yuv420p, YUV420P, accurate_rnd);
     SET_FF_NVX_TO_ALL_RGBX_FUNC(yuv422p, YUV422P, accurate_rnd);
+    SET_FF_NVX_TO_RGBX_FUNC(yuv420p, YUV420P, rgb24, RGB24, accurate_rnd);
 
     if (c->dstFormat == AV_PIX_FMT_YUV420P &&
         (c->srcFormat == AV_PIX_FMT_NV24 || c->srcFormat == AV_PIX_FMT_NV42) &&
