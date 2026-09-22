@@ -29,22 +29,18 @@ fi
 
 mkdir -p "$buildRoot" "$profileRoot" "$installPrefix"
 
-libraryPath="$buildRoot/libavdevice:$buildRoot/libavfilter:$buildRoot/libavformat"
-libraryPath="$libraryPath:$buildRoot/libavcodec:$buildRoot/libswresample"
-libraryPath="$libraryPath:$buildRoot/libswscale:$buildRoot/libavutil"
-
 cd "$buildRoot"
-"$sourceRoot/configure" \
+bash "$sourceRoot/configure" \
     --prefix="$workRoot/generate-install" \
-    --enable-shared \
+    --disable-shared \
+    --enable-static \
     --enable-pthreads \
     --enable-gpl \
     --extra-cflags="-fopenmp -O3 -mcpu=tsv110 -fprofile-generate=$profileRoot" \
     --extra-ldflags="-fopenmp -fprofile-generate=$profileRoot"
 make -j"$jobs"
 
-LD_LIBRARY_PATH="$libraryPath:${LD_LIBRARY_PATH:-}" \
-    "$buildRoot/ffmpeg_g" -v error -nostdin \
+"$buildRoot/ffmpeg_g" -v error -nostdin \
     -i "$trainingVideo" -frames:v "$trainingFrames" -an -sn \
     -vf format=rgb24 -f null - >/dev/null
 
@@ -55,9 +51,10 @@ if [ "$profileCount" -eq 0 ]; then
 fi
 
 make distclean
-"$sourceRoot/configure" \
+bash "$sourceRoot/configure" \
     --prefix="$installPrefix" \
-    --enable-shared \
+    --disable-shared \
+    --enable-static \
     --enable-pthreads \
     --enable-gpl \
     --extra-cflags="-fopenmp -O3 -mcpu=tsv110 -fprofile-use=$profileRoot -fprofile-correction -Wno-missing-profile -flto=$ltoJobs" \
@@ -65,4 +62,10 @@ make distclean
 make -j"$jobs"
 make install
 
-echo "Installed PGO/LTO build to $installPrefix"
+if ldd "$installPrefix/bin/ffmpeg" 2>/dev/null | \
+        grep -Eq 'lib(avcodec|avdevice|avfilter|avformat|avutil|swresample|swscale)\.so'; then
+    echo "Installed ffmpeg unexpectedly depends on shared FFmpeg libraries" >&2
+    exit 1
+fi
+
+echo "Installed static-library PGO/LTO build to $installPrefix"

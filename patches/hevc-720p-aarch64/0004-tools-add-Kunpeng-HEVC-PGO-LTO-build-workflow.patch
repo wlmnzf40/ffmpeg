@@ -4,16 +4,16 @@ Date: Tue, 22 Sep 2026 11:03:40 +0800
 Subject: [PATCH 4/4] tools: add Kunpeng HEVC PGO/LTO build workflow
 
 ---
- tools/build_kunpeng_hevc_pgo.sh | 68 +++++++++++++++++++++++++++++++++
- 1 file changed, 68 insertions(+)
+ tools/build_kunpeng_hevc_pgo.sh | 71 ++++++++++++++++++++++++++++++++++
+ 1 file changed, 71 insertions(+)
  create mode 100755 tools/build_kunpeng_hevc_pgo.sh
 
 diff --git a/tools/build_kunpeng_hevc_pgo.sh b/tools/build_kunpeng_hevc_pgo.sh
 new file mode 100755
-index 0000000..03ab4ee
+index 0000000..2313c74
 --- /dev/null
 +++ b/tools/build_kunpeng_hevc_pgo.sh
-@@ -0,0 +1,68 @@
+@@ -0,0 +1,71 @@
 +#!/usr/bin/env bash
 +
 +set -euo pipefail
@@ -45,22 +45,18 @@ index 0000000..03ab4ee
 +
 +mkdir -p "$buildRoot" "$profileRoot" "$installPrefix"
 +
-+libraryPath="$buildRoot/libavdevice:$buildRoot/libavfilter:$buildRoot/libavformat"
-+libraryPath="$libraryPath:$buildRoot/libavcodec:$buildRoot/libswresample"
-+libraryPath="$libraryPath:$buildRoot/libswscale:$buildRoot/libavutil"
-+
 +cd "$buildRoot"
-+"$sourceRoot/configure" \
++bash "$sourceRoot/configure" \
 +    --prefix="$workRoot/generate-install" \
-+    --enable-shared \
++    --disable-shared \
++    --enable-static \
 +    --enable-pthreads \
 +    --enable-gpl \
 +    --extra-cflags="-fopenmp -O3 -mcpu=tsv110 -fprofile-generate=$profileRoot" \
 +    --extra-ldflags="-fopenmp -fprofile-generate=$profileRoot"
 +make -j"$jobs"
 +
-+LD_LIBRARY_PATH="$libraryPath:${LD_LIBRARY_PATH:-}" \
-+    "$buildRoot/ffmpeg_g" -v error -nostdin \
++"$buildRoot/ffmpeg_g" -v error -nostdin \
 +    -i "$trainingVideo" -frames:v "$trainingFrames" -an -sn \
 +    -vf format=rgb24 -f null - >/dev/null
 +
@@ -71,9 +67,10 @@ index 0000000..03ab4ee
 +fi
 +
 +make distclean
-+"$sourceRoot/configure" \
++bash "$sourceRoot/configure" \
 +    --prefix="$installPrefix" \
-+    --enable-shared \
++    --disable-shared \
++    --enable-static \
 +    --enable-pthreads \
 +    --enable-gpl \
 +    --extra-cflags="-fopenmp -O3 -mcpu=tsv110 -fprofile-use=$profileRoot -fprofile-correction -Wno-missing-profile -flto=$ltoJobs" \
@@ -81,4 +78,10 @@ index 0000000..03ab4ee
 +make -j"$jobs"
 +make install
 +
-+echo "Installed PGO/LTO build to $installPrefix"
++if ldd "$installPrefix/bin/ffmpeg" 2>/dev/null | \
++        grep -Eq 'lib(avcodec|avdevice|avfilter|avformat|avutil|swresample|swscale)\.so'; then
++    echo "Installed ffmpeg unexpectedly depends on shared FFmpeg libraries" >&2
++    exit 1
++fi
++
++echo "Installed static-library PGO/LTO build to $installPrefix"

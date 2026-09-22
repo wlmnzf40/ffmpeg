@@ -20,10 +20,17 @@ RGB24 NEON。通用 `-O3` 无法利用实际分支概率和调用频率。本优
 4. `make distclean` 后在同一 build 目录重新 configure。
 5. use 阶段启用 `-fprofile-use -fprofile-correction`、`-mcpu=tsv110` 和并行
    `-flto=32`。
-6. 安装到用户指定 prefix，不覆盖系统 FFmpeg。
+6. 两个阶段均使用 `--disable-shared --enable-static`，把 FFmpeg 自有库静态链接
+   进可执行文件；训练及最终运行不再依赖 `LD_LIBRARY_PATH`。
+7. 安装到用户指定 prefix，并检查最终程序没有依赖 `libav*.so`、
+   `libswscale.so` 或 `libswresample.so`。
 
 脚本拒绝使用非空工作目录，避免误删或覆盖已有构建数据。线程数、LTO 分区数
 和训练帧数可由 `JOBS`、`LTO_JOBS`、`TRAINING_FRAMES` 环境变量调整。
+
+这里的“静态”特指 FFmpeg 自有库静态链接。glibc、libm、libpthread 和 libgomp
+等系统运行库仍由系统动态提供，避免完全静态链接 glibc 带来的 NSS、DNS 和系统
+兼容性问题。
 
 ## 性能影响
 
@@ -47,4 +54,10 @@ tmux new-session -d -s LLM-ffmpeg-pgo \
    /root/ffmpeg-920b/HEVC-720p-10min.MOV \
    /root/ffmpeg-920b/pgo-work \
    /root/ffmpeg-920b/pgo-install"
+```
+
+安装完成后可直接运行，不需要设置 `LD_LIBRARY_PATH`：
+
+```bash
+/root/ffmpeg-920b/pgo-install/bin/ffmpeg -version
 ```
