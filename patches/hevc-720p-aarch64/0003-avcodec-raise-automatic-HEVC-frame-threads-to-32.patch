@@ -1,0 +1,47 @@
+From a7edeb54af024b75af5b330cedfe6ff569090409 Mon Sep 17 00:00:00 2001
+From: wanglimin40 <wanglimin40@huawei.com>
+Date: Tue, 22 Sep 2026 11:02:46 +0800
+Subject: [PATCH 3/4] avcodec: raise automatic HEVC frame threads to 32
+
+---
+ libavcodec/pthread_frame.c    | 12 ++++++++----
+ libavcodec/pthread_internal.h |  1 +
+ 2 files changed, 9 insertions(+), 4 deletions(-)
+
+diff --git a/libavcodec/pthread_frame.c b/libavcodec/pthread_frame.c
+index 1b1b966..625b74f 100644
+--- a/libavcodec/pthread_frame.c
++++ b/libavcodec/pthread_frame.c
+@@ -926,12 +926,16 @@ int ff_frame_thread_init(AVCodecContext *avctx)
+     int err, i = 0;
+ 
+     if (!thread_count) {
+-        int nb_cpus = av_cpu_count();
++        int maxAutoThreads = avctx->codec_id == AV_CODEC_ID_HEVC ?
++                             MAX_HEVC_AUTO_THREADS : MAX_AUTO_THREADS;
++        int nbCpus = av_cpu_count();
++
+         // use number of cores + 1 as thread count if there is more than one
+-        if (nb_cpus > 1)
+-            thread_count = avctx->thread_count = FFMIN(nb_cpus + 1, MAX_AUTO_THREADS);
+-        else
++        if (nbCpus > 1) {
++            thread_count = avctx->thread_count = FFMIN(nbCpus + 1, maxAutoThreads);
++        } else {
+             thread_count = avctx->thread_count = 1;
++        }
+     }
+ 
+     if (thread_count <= 1) {
+diff --git a/libavcodec/pthread_internal.h b/libavcodec/pthread_internal.h
+index d0b6a7a..fd53ab1 100644
+--- a/libavcodec/pthread_internal.h
++++ b/libavcodec/pthread_internal.h
+@@ -24,6 +24,7 @@
+ /* H.264 slice threading seems to be buggy with more than 16 threads,
+  * limit the number of threads to 16 for automatic detection */
+ #define MAX_AUTO_THREADS 16
++#define MAX_HEVC_AUTO_THREADS 32
+ 
+ int ff_slice_thread_init(AVCodecContext *avctx);
+ void ff_slice_thread_free(AVCodecContext *avctx);

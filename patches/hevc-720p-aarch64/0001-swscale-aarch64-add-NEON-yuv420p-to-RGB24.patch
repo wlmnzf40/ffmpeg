@@ -1,0 +1,77 @@
+From 4fac91ce1e64418116f3bab1128cea25c266bc10 Mon Sep 17 00:00:00 2001
+From: wanglimin40 <wanglimin40@huawei.com>
+Date: Tue, 22 Sep 2026 11:00:32 +0800
+Subject: [PATCH 1/4] swscale/aarch64: add NEON yuv420p to RGB24
+
+---
+ libswscale/aarch64/swscale_unscaled.c |  2 ++
+ libswscale/aarch64/yuv2rgb_neon.S     | 15 +++++++++++++++
+ 2 files changed, 17 insertions(+)
+
+diff --git a/libswscale/aarch64/swscale_unscaled.c b/libswscale/aarch64/swscale_unscaled.c
+index 9dfccc0..5d0724c 100644
+--- a/libswscale/aarch64/swscale_unscaled.c
++++ b/libswscale/aarch64/swscale_unscaled.c
+@@ -90,6 +90,7 @@ DECLARE_FF_YUVX_TO_GBRP_FUNCS(yuvx, gbrp)
+ 
+ DECLARE_FF_YUVX_TO_ALL_RGBX_FUNCS(yuv420p)
+ DECLARE_FF_YUVX_TO_ALL_RGBX_FUNCS(yuv422p)
++DECLARE_FF_YUVX_TO_RGBX_FUNCS(yuv420p, rgb24)
+ 
+ #define DECLARE_FF_NVX_TO_RGBX_FUNCS(ifmt, ofmt)                                            \
+ int ff_##ifmt##_to_##ofmt##_neon(int w, int h,                                              \
+@@ -202,6 +203,7 @@ static void get_unscaled_swscale_neon(SwsContext *c) {
+     SET_FF_NVX_TO_ALL_RGBX_FUNC(nv21, NV21, accurate_rnd);
+     SET_FF_NVX_TO_ALL_RGBX_FUNC(yuv420p, YUV420P, accurate_rnd);
+     SET_FF_NVX_TO_ALL_RGBX_FUNC(yuv422p, YUV422P, accurate_rnd);
++    SET_FF_NVX_TO_RGBX_FUNC(yuv420p, YUV420P, rgb24, RGB24, accurate_rnd);
+ 
+     if (c->dstFormat == AV_PIX_FMT_YUV420P &&
+         (c->srcFormat == AV_PIX_FMT_NV24 || c->srcFormat == AV_PIX_FMT_NV42) &&
+diff --git a/libswscale/aarch64/yuv2rgb_neon.S b/libswscale/aarch64/yuv2rgb_neon.S
+index cc7d8b5..518f986 100644
+--- a/libswscale/aarch64/yuv2rgb_neon.S
++++ b/libswscale/aarch64/yuv2rgb_neon.S
+@@ -77,8 +77,13 @@
+ .ifc \ofmt,gbrp
+         load_dst1_dst2  40, 48, 56, 64
+         sub             w3, w3, w0                                      // w3 = linesize  - width     (padding)
++.else
++.ifc \ofmt,rgb24
++        sub             w3, w3, w0                                      // w3 = linesize  - width * 3 (padding)
++        sub             w3, w3, w0, lsl #1
+ .else
+         sub             w3, w3, w0, lsl #2                              // w3 = linesize  - width * 4 (padding)
++.endif
+ .endif
+         sub             w5, w5, w0                                      // w5 = linesizeY - width     (paddingY)
+         sub             w7,  w7,  w0, lsr #1                            // w7  = linesizeU - width / 2 (paddingU)
+@@ -220,14 +225,23 @@ function ff_\ifmt\()_to_\ofmt\()_neon, export=1
+         compute_rgba    v6.8b,v5.8b,v4.8b,v7.8b, v18.8b,v17.8b,v16.8b,v19.8b
+ .endif
+ 
++.ifc \ofmt,rgb24
++        compute_rgb     v4.8b,v5.8b,v6.8b, v16.8b,v17.8b,v18.8b
++.endif
++
+ .ifc \ofmt,gbrp
+         compute_rgb     v18.8b,v4.8b,v6.8b, v19.8b,v5.8b,v7.8b
+         st1             {  v4.8b,  v5.8b }, [x2],  #16
+         st1             {  v6.8b,  v7.8b }, [x10], #16
+         st1             { v18.8b, v19.8b }, [x15], #16
++.else
++.ifc \ofmt,rgb24
++        st3             { v4.8b, v5.8b, v6.8b }, [x2], #24
++        st3             {v16.8b,v17.8b,v18.8b }, [x2], #24
+ .else
+         st4             { v4.8b, v5.8b, v6.8b, v7.8b}, [x2], #32
+         st4             {v16.8b,v17.8b,v18.8b,v19.8b}, [x2], #32
++.endif
+ .endif
+         subs            w8, w8, #16                                     // width -= 16
+         b.gt            2b
+@@ -257,3 +271,4 @@ declare_rgb_funcs nv12
+ declare_rgb_funcs nv21
+ declare_rgb_funcs yuv420p
+ declare_rgb_funcs yuv422p
++declare_func yuv420p, rgb24
