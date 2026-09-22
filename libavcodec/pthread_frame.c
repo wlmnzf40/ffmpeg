@@ -926,12 +926,16 @@ int ff_frame_thread_init(AVCodecContext *avctx)
     int err, i = 0;
 
     if (!thread_count) {
-        int nb_cpus = av_cpu_count();
+        int maxAutoThreads = avctx->codec_id == AV_CODEC_ID_HEVC ?
+                             MAX_HEVC_AUTO_THREADS : MAX_AUTO_THREADS;
+        int nbCpus = av_cpu_count();
+
         // use number of cores + 1 as thread count if there is more than one
-        if (nb_cpus > 1)
-            thread_count = avctx->thread_count = FFMIN(nb_cpus + 1, MAX_AUTO_THREADS);
-        else
+        if (nbCpus > 1) {
+            thread_count = avctx->thread_count = FFMIN(nbCpus + 1, maxAutoThreads);
+        } else {
             thread_count = avctx->thread_count = 1;
+        }
     }
 
     if (thread_count <= 1) {
