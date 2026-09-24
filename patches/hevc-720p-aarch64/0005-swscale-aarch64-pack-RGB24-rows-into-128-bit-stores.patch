@@ -1,0 +1,105 @@
+From 69230cb4505a75674f99799c31beec00e5d4de68 Mon Sep 17 00:00:00 2001
+From: wanglimin40 <wanglimin40@huawei.com>
+Date: Thu, 24 Sep 2026 10:34:47 +0800
+Subject: [PATCH] swscale/aarch64: pack RGB24 rows into 128-bit stores
+
+---
+ libswscale/aarch64/yuv2rgb_neon.S | 52 +++++++++++++++++--------------
+ 1 file changed, 29 insertions(+), 23 deletions(-)
+
+diff --git a/libswscale/aarch64/yuv2rgb_neon.S b/libswscale/aarch64/yuv2rgb_neon.S
+index 0c421e4..28709f3 100644
+--- a/libswscale/aarch64/yuv2rgb_neon.S
++++ b/libswscale/aarch64/yuv2rgb_neon.S
+@@ -273,6 +273,7 @@ declare_rgb_funcs yuv420p
+ declare_rgb_funcs yuv422p
+ function ff_yuv420p_to_rgb24_neon, export=1
+         load_args_yuv420p rgb24
++        movi            v28.8h, #4, lsl #8                             // 128 * (1<<3)
+         mov             w9, w1
+ 1:
+         add             w17, w5, w0                                    // linesizeY
+@@ -282,10 +283,9 @@ function ff_yuv420p_to_rgb24_neon, export=1
+         add             x12, x2, w17, sxtw                             // second destination line
+         mov             w8, w0                                         // remaining width
+ 2:
+-        movi            v5.8h, #4, lsl #8                              // 128 * (1<<3)
+         load_chroma_yuv420p
+-        sub             v18.8h, v18.8h, v5.8h                          // U*(1<<3) - 128*(1<<3)
+-        sub             v19.8h, v19.8h, v5.8h                          // V*(1<<3) - 128*(1<<3)
++        sub             v18.8h, v18.8h, v28.8h                         // U*(1<<3) - 128*(1<<3)
++        sub             v19.8h, v19.8h, v28.8h                         // V*(1<<3) - 128*(1<<3)
+         sqdmulh         v20.8h, v19.8h, v1.h[0]                        // V * v2r
+         sqdmulh         v22.8h, v18.8h, v1.h[1]                        // U * u2g
+         sqdmulh         v19.8h, v19.8h, v1.h[2]                        // V * v2g
+@@ -298,14 +298,6 @@ function ff_yuv420p_to_rgb24_neon, export=1
+         zip2            v25.8h, v24.8h, v24.8h                         // B high pixels
+         zip1            v24.8h, v24.8h, v24.8h                         // B low pixels
+ 
+-        // Preserve chroma contributions for the second luma line.
+-        mov             v28.16b, v20.16b
+-        mov             v29.16b, v21.16b
+-        mov             v30.16b, v22.16b
+-        mov             v31.16b, v23.16b
+-        mov             v7.16b,  v24.16b
+-        mov             v15.16b, v25.16b
+-
+         ld1             {v2.16b}, [x4], #16
+         ushll           v26.8h, v2.8b,  #3
+         ushll2          v27.8h, v2.16b, #3
+@@ -313,16 +305,20 @@ function ff_yuv420p_to_rgb24_neon, export=1
+         sub             v27.8h, v27.8h, v3.8h
+         sqdmulh         v26.8h, v26.8h, v0.8h
+         sqdmulh         v27.8h, v27.8h, v0.8h
+-        compute_rgb     v4.8b,v5.8b,v6.8b, v16.8b,v17.8b,v18.8b
+-        st3             { v4.8b, v5.8b, v6.8b }, [x2], #24
+-        st3             {v16.8b,v17.8b,v18.8b }, [x2], #24
++        add             v4.8h,  v26.8h, v20.8h
++        add             v16.8h, v27.8h, v21.8h
++        add             v5.8h,  v26.8h, v22.8h
++        add             v17.8h, v27.8h, v23.8h
++        add             v6.8h,  v26.8h, v24.8h
++        add             v18.8h, v27.8h, v25.8h
++        sqrshrun        v4.8b,  v4.8h,  #1
++        sqrshrun2       v4.16b, v16.8h, #1
++        sqrshrun        v5.8b,  v5.8h,  #1
++        sqrshrun2       v5.16b, v17.8h, #1
++        sqrshrun        v6.8b,  v6.8h,  #1
++        sqrshrun2       v6.16b, v18.8h, #1
++        st3             {v4.16b, v5.16b, v6.16b}, [x2], #48
+ 
+-        mov             v20.16b, v28.16b
+-        mov             v21.16b, v29.16b
+-        mov             v22.16b, v30.16b
+-        mov             v23.16b, v31.16b
+-        mov             v24.16b, v7.16b
+-        mov             v25.16b, v15.16b
+         ld1             {v2.16b}, [x10], #16
+         ushll           v26.8h, v2.8b,  #3
+         ushll2          v27.8h, v2.16b, #3
+@@ -330,9 +326,19 @@ function ff_yuv420p_to_rgb24_neon, export=1
+         sub             v27.8h, v27.8h, v3.8h
+         sqdmulh         v26.8h, v26.8h, v0.8h
+         sqdmulh         v27.8h, v27.8h, v0.8h
+-        compute_rgb     v4.8b,v5.8b,v6.8b, v16.8b,v17.8b,v18.8b
+-        st3             { v4.8b, v5.8b, v6.8b }, [x12], #24
+-        st3             {v16.8b,v17.8b,v18.8b }, [x12], #24
++        add             v4.8h,  v26.8h, v20.8h
++        add             v16.8h, v27.8h, v21.8h
++        add             v5.8h,  v26.8h, v22.8h
++        add             v17.8h, v27.8h, v23.8h
++        add             v6.8h,  v26.8h, v24.8h
++        add             v18.8h, v27.8h, v25.8h
++        sqrshrun        v4.8b,  v4.8h,  #1
++        sqrshrun2       v4.16b, v16.8h, #1
++        sqrshrun        v5.8b,  v5.8h,  #1
++        sqrshrun2       v5.16b, v17.8h, #1
++        sqrshrun        v6.8b,  v6.8h,  #1
++        sqrshrun2       v6.16b, v18.8h, #1
++        st3             {v4.16b, v5.16b, v6.16b}, [x12], #48
+ 
+         subs            w8, w8, #16
+         b.gt            2b
+-- 
+2.43.0
+
