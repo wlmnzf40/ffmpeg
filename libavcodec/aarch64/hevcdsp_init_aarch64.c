@@ -96,6 +96,54 @@ void ff_hevc_put_hevc_pel_bi_direct_8_neon(uint8_t *dst, ptrdiff_t dststride,
                                             const uint8_t *src0, ptrdiff_t src0stride,
                                             const uint8_t *src1, ptrdiff_t src1stride,
                                             int height, int width);
+void ff_hevc_put_hevc_qpel_hv_10_neon(int16_t *dst, const uint8_t *src,
+                                       ptrdiff_t srcstride, int height,
+                                       intptr_t mx, intptr_t my, int width);
+void ff_hevc_put_hevc_qpel_h_10_neon(int16_t *dst, const uint8_t *src,
+                                      ptrdiff_t srcstride, int height,
+                                      intptr_t mx, intptr_t my, int width);
+void ff_hevc_put_hevc_qpel_v_10_neon(int16_t *dst, const uint8_t *src,
+                                      ptrdiff_t srcstride, int height,
+                                      intptr_t mx, intptr_t my, int width);
+void ff_hevc_put_hevc_qpel_uni_h_10_neon(uint8_t *dst, ptrdiff_t dststride,
+                                          const uint8_t *src,
+                                          ptrdiff_t srcstride, int height,
+                                          intptr_t mx, intptr_t my, int width);
+void ff_hevc_put_hevc_qpel_uni_v_10_neon(uint8_t *dst, ptrdiff_t dststride,
+                                          const uint8_t *src,
+                                          ptrdiff_t srcstride, int height,
+                                          intptr_t mx, intptr_t my, int width);
+void ff_hevc_put_hevc_qpel_bi_h_10_neon(uint8_t *dst, ptrdiff_t dststride,
+                                         const uint8_t *src,
+                                         ptrdiff_t srcstride,
+                                         const int16_t *src2, int height,
+                                         intptr_t mx, intptr_t my, int width);
+void ff_hevc_put_hevc_qpel_bi_v_10_neon(uint8_t *dst, ptrdiff_t dststride,
+                                         const uint8_t *src,
+                                         ptrdiff_t srcstride,
+                                         const int16_t *src2, int height,
+                                         intptr_t mx, intptr_t my, int width);
+void ff_hevc_put_hevc_qpel_uni_hv_10_neon(uint8_t *dst, ptrdiff_t dststride,
+                                           const uint8_t *src,
+                                           ptrdiff_t srcstride, int height,
+                                           intptr_t mx, intptr_t my, int width);
+void ff_hevc_put_hevc_qpel_bi_hv_10_neon(uint8_t *dst, ptrdiff_t dststride,
+                                          const uint8_t *src,
+                                          ptrdiff_t srcstride,
+                                          const int16_t *src2, int height,
+                                          intptr_t mx, intptr_t my, int width);
+void ff_hevc_put_hevc_epel_hv_10_neon(int16_t *dst, const uint8_t *src,
+                                       ptrdiff_t srcstride, int height,
+                                       intptr_t mx, intptr_t my, int width);
+void ff_hevc_put_hevc_epel_uni_hv_10_neon(uint8_t *dst, ptrdiff_t dststride,
+                                           const uint8_t *src,
+                                           ptrdiff_t srcstride, int height,
+                                           intptr_t mx, intptr_t my, int width);
+void ff_hevc_put_hevc_epel_bi_hv_10_neon(uint8_t *dst, ptrdiff_t dststride,
+                                          const uint8_t *src,
+                                          ptrdiff_t srcstride,
+                                          const int16_t *src2, int height,
+                                          intptr_t mx, intptr_t my, int width);
 
 #define NEON8_FNASSIGN(member, v, h, fn, ext) \
         member[1][v][h] = ff_hevc_put_hevc_##fn##4_8_neon##ext;  \
@@ -246,6 +294,20 @@ av_cold void ff_hevc_dsp_init_aarch64(HEVCDSPContext *c, const int bit_depth)
 
     }
     if (bit_depth == 10) {
+        for (int width = 1; width < 10; width++) {
+            c->put_hevc_qpel[width][0][1] = ff_hevc_put_hevc_qpel_h_10_neon;
+            c->put_hevc_qpel[width][1][0] = ff_hevc_put_hevc_qpel_v_10_neon;
+            c->put_hevc_qpel[width][1][1] = ff_hevc_put_hevc_qpel_hv_10_neon;
+            c->put_hevc_qpel_uni[width][0][1] = ff_hevc_put_hevc_qpel_uni_h_10_neon;
+            c->put_hevc_qpel_uni[width][1][0] = ff_hevc_put_hevc_qpel_uni_v_10_neon;
+            c->put_hevc_qpel_uni[width][1][1] = ff_hevc_put_hevc_qpel_uni_hv_10_neon;
+            c->put_hevc_qpel_bi[width][0][1] = ff_hevc_put_hevc_qpel_bi_h_10_neon;
+            c->put_hevc_qpel_bi[width][1][0] = ff_hevc_put_hevc_qpel_bi_v_10_neon;
+            c->put_hevc_qpel_bi[width][1][1] = ff_hevc_put_hevc_qpel_bi_hv_10_neon;
+            c->put_hevc_epel[width][1][1] = ff_hevc_put_hevc_epel_hv_10_neon;
+            c->put_hevc_epel_uni[width][1][1] = ff_hevc_put_hevc_epel_uni_hv_10_neon;
+            c->put_hevc_epel_bi[width][1][1] = ff_hevc_put_hevc_epel_bi_hv_10_neon;
+        }
         c->hevc_h_loop_filter_luma     = ff_hevc_h_loop_filter_luma_10_neon;
         c->hevc_v_loop_filter_luma     = ff_hevc_v_loop_filter_luma_10_neon;
         c->hevc_h_loop_filter_chroma   = ff_hevc_h_loop_filter_chroma_10_neon;
