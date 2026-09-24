@@ -1,0 +1,91 @@
+From 813f0c4c06c612381e6939f011abbd3d6a5606e9 Mon Sep 17 00:00:00 2001
+From: wanglimin40 <wanglimin40@huawei.com>
+Date: Thu, 24 Sep 2026 13:12:30 +0800
+Subject: [PATCH] avcodec/hevc: fast-path matching reference indices
+
+---
+ libavcodec/hevc/filter.c | 46 ++++++++++++++++++++++++++++++++++------
+ 1 file changed, 39 insertions(+), 7 deletions(-)
+
+diff --git a/libavcodec/hevc/filter.c b/libavcodec/hevc/filter.c
+index 510c48e..27c340a 100644
+--- a/libavcodec/hevc/filter.c
++++ b/libavcodec/hevc/filter.c
+@@ -675,11 +675,29 @@ static void deblocking_filter_CTB(const HEVCContext *s, const HEVCLayerContext *
+     }
+ }
+ 
+-static int boundary_strength(const RefPicList *currRefPicList,
+-                             const MvField *curr, const MvField *neigh,
+-                             const RefPicList *neighRefPicList)
++static av_always_inline int boundary_strength(const RefPicList *currRefPicList,
++                                              const MvField *curr,
++                                              const MvField *neigh,
++                                              const RefPicList *neighRefPicList)
+ {
+     if (curr->pred_flag == PF_BI &&  neigh->pred_flag == PF_BI) {
++        if (currRefPicList == neighRefPicList &&
++            curr->ref_idx[0] == neigh->ref_idx[0] &&
++            curr->ref_idx[1] == neigh->ref_idx[1]) {
++            const int currRef0 = currRefPicList[0].list[curr->ref_idx[0]];
++            const int currRef1 = currRefPicList[1].list[curr->ref_idx[1]];
++
++            if (currRef0 != currRef1) {
++                if (FFABS(neigh->mv[0].x - curr->mv[0].x) >= 4 ||
++                    FFABS(neigh->mv[0].y - curr->mv[0].y) >= 4 ||
++                    FFABS(neigh->mv[1].x - curr->mv[1].x) >= 4 ||
++                    FFABS(neigh->mv[1].y - curr->mv[1].y) >= 4) {
++                    return 1;
++                }
++                return 0;
++            }
++        }
++
+         const int currRef0  = currRefPicList[0].list[curr->ref_idx[0]];
+         const int currRef1  = currRefPicList[1].list[curr->ref_idx[1]];
+         const int neighRef0 = neighRefPicList[0].list[neigh->ref_idx[0]];
+@@ -713,23 +731,37 @@ static int boundary_strength(const RefPicList *currRefPicList,
+     } else if ((curr->pred_flag != PF_BI) && (neigh->pred_flag != PF_BI)){ // 1 MV
+         Mv currentMv, neighbourMv;
+         int currentRef, neighbourRef;
++        int currentList, neighbourList;
+ 
+         if (curr->pred_flag & 1) {
++            currentList = 0;
+             currentMv  = curr->mv[0];
+-            currentRef = currRefPicList[0].list[curr->ref_idx[0]];
+         } else {
++            currentList = 1;
+             currentMv  = curr->mv[1];
+-            currentRef = currRefPicList[1].list[curr->ref_idx[1]];
+         }
+ 
+         if (neigh->pred_flag & 1) {
++            neighbourList = 0;
+             neighbourMv  = neigh->mv[0];
+-            neighbourRef = neighRefPicList[0].list[neigh->ref_idx[0]];
+         } else {
++            neighbourList = 1;
+             neighbourMv  = neigh->mv[1];
+-            neighbourRef = neighRefPicList[1].list[neigh->ref_idx[1]];
+         }
+ 
++        if (currRefPicList == neighRefPicList &&
++            currentList == neighbourList &&
++            curr->ref_idx[currentList] == neigh->ref_idx[neighbourList]) {
++            if (FFABS(currentMv.x - neighbourMv.x) >= 4 ||
++                FFABS(currentMv.y - neighbourMv.y) >= 4) {
++                return 1;
++            }
++            return 0;
++        }
++
++        currentRef = currRefPicList[currentList].list[curr->ref_idx[currentList]];
++        neighbourRef = neighRefPicList[neighbourList].list[neigh->ref_idx[neighbourList]];
++
+         if (currentRef == neighbourRef) {
+             if (FFABS(currentMv.x - neighbourMv.x) >= 4 ||
+                 FFABS(currentMv.y - neighbourMv.y) >= 4)
+-- 
+2.43.0
+
