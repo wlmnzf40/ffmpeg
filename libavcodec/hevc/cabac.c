@@ -511,7 +511,7 @@ int ff_hevc_cabac_init(HEVCLocalContext *lc, const HEVCPPS *pps,
     return 0;
 }
 
-#define GET_CABAC(ctx)  get_cabac(&lc->cc, &lc->cabac_state[ctx])
+#define GET_CABAC(ctx)  get_cabac_inline(&lc->cc, &lc->cabac_state[ctx])
 
 int ff_hevc_sao_merge_flag_decode(HEVCLocalContext *lc)
 {
@@ -1512,4 +1512,3 @@ void ff_hevc_hls_mvd_coding(HEVCLocalContext *lc, int x0, int y0, int log2_cb_si
     case 0: lc->pu.mvd.y = 0;                       break;
     }
 }
-
