@@ -675,14 +675,19 @@ static void deblocking_filter_CTB(const HEVCContext *s, const HEVCLayerContext *
     }
 }
 
-static int boundary_strength(const HEVCContext *s, const MvField *curr, const MvField *neigh,
-                             const RefPicList *neigh_refPicList)
+static int boundary_strength(const RefPicList *currRefPicList,
+                             const MvField *curr, const MvField *neigh,
+                             const RefPicList *neighRefPicList)
 {
     if (curr->pred_flag == PF_BI &&  neigh->pred_flag == PF_BI) {
+        const int currRef0  = currRefPicList[0].list[curr->ref_idx[0]];
+        const int currRef1  = currRefPicList[1].list[curr->ref_idx[1]];
+        const int neighRef0 = neighRefPicList[0].list[neigh->ref_idx[0]];
+        const int neighRef1 = neighRefPicList[1].list[neigh->ref_idx[1]];
+
         // same L0 and L1
-        if (s->cur_frame->refPicList[0].list[curr->ref_idx[0]] == neigh_refPicList[0].list[neigh->ref_idx[0]]  &&
-            s->cur_frame->refPicList[0].list[curr->ref_idx[0]] == s->cur_frame->refPicList[1].list[curr->ref_idx[1]] &&
-            neigh_refPicList[0].list[neigh->ref_idx[0]] == neigh_refPicList[1].list[neigh->ref_idx[1]]) {
+        if (currRef0 == neighRef0 && currRef0 == currRef1 &&
+            neighRef0 == neighRef1) {
             if ((FFABS(neigh->mv[0].x - curr->mv[0].x) >= 4 || FFABS(neigh->mv[0].y - curr->mv[0].y) >= 4 ||
                  FFABS(neigh->mv[1].x - curr->mv[1].x) >= 4 || FFABS(neigh->mv[1].y - curr->mv[1].y) >= 4) &&
                 (FFABS(neigh->mv[1].x - curr->mv[0].x) >= 4 || FFABS(neigh->mv[1].y - curr->mv[0].y) >= 4 ||
@@ -690,15 +695,13 @@ static int boundary_strength(const HEVCContext *s, const MvField *curr, const Mv
                 return 1;
             else
                 return 0;
-        } else if (neigh_refPicList[0].list[neigh->ref_idx[0]] == s->cur_frame->refPicList[0].list[curr->ref_idx[0]] &&
-                   neigh_refPicList[1].list[neigh->ref_idx[1]] == s->cur_frame->refPicList[1].list[curr->ref_idx[1]]) {
+        } else if (neighRef0 == currRef0 && neighRef1 == currRef1) {
             if (FFABS(neigh->mv[0].x - curr->mv[0].x) >= 4 || FFABS(neigh->mv[0].y - curr->mv[0].y) >= 4 ||
                 FFABS(neigh->mv[1].x - curr->mv[1].x) >= 4 || FFABS(neigh->mv[1].y - curr->mv[1].y) >= 4)
                 return 1;
             else
                 return 0;
-        } else if (neigh_refPicList[1].list[neigh->ref_idx[1]] == s->cur_frame->refPicList[0].list[curr->ref_idx[0]] &&
-                   neigh_refPicList[0].list[neigh->ref_idx[0]] == s->cur_frame->refPicList[1].list[curr->ref_idx[1]]) {
+        } else if (neighRef1 == currRef0 && neighRef0 == currRef1) {
             if (FFABS(neigh->mv[1].x - curr->mv[0].x) >= 4 || FFABS(neigh->mv[1].y - curr->mv[0].y) >= 4 ||
                 FFABS(neigh->mv[0].x - curr->mv[1].x) >= 4 || FFABS(neigh->mv[0].y - curr->mv[1].y) >= 4)
                 return 1;
@@ -708,27 +711,28 @@ static int boundary_strength(const HEVCContext *s, const MvField *curr, const Mv
             return 1;
         }
     } else if ((curr->pred_flag != PF_BI) && (neigh->pred_flag != PF_BI)){ // 1 MV
-        Mv A, B;
-        int ref_A, ref_B;
+        Mv currentMv, neighbourMv;
+        int currentRef, neighbourRef;
 
         if (curr->pred_flag & 1) {
-            A     = curr->mv[0];
-            ref_A = s->cur_frame->refPicList[0].list[curr->ref_idx[0]];
+            currentMv  = curr->mv[0];
+            currentRef = currRefPicList[0].list[curr->ref_idx[0]];
         } else {
-            A     = curr->mv[1];
-            ref_A = s->cur_frame->refPicList[1].list[curr->ref_idx[1]];
+            currentMv  = curr->mv[1];
+            currentRef = currRefPicList[1].list[curr->ref_idx[1]];
         }
 
         if (neigh->pred_flag & 1) {
-            B     = neigh->mv[0];
-            ref_B = neigh_refPicList[0].list[neigh->ref_idx[0]];
+            neighbourMv  = neigh->mv[0];
+            neighbourRef = neighRefPicList[0].list[neigh->ref_idx[0]];
         } else {
-            B     = neigh->mv[1];
-            ref_B = neigh_refPicList[1].list[neigh->ref_idx[1]];
+            neighbourMv  = neigh->mv[1];
+            neighbourRef = neighRefPicList[1].list[neigh->ref_idx[1]];
         }
 
-        if (ref_A == ref_B) {
-            if (FFABS(A.x - B.x) >= 4 || FFABS(A.y - B.y) >= 4)
+        if (currentRef == neighbourRef) {
+            if (FFABS(currentMv.x - neighbourMv.x) >= 4 ||
+                FFABS(currentMv.y - neighbourMv.y) >= 4)
                 return 1;
             else
                 return 0;
@@ -746,6 +750,12 @@ void ff_hevc_deblocking_boundary_strengths(HEVCLocalContext *lc, const HEVCLayer
     const HEVCSPS *const sps = pps->sps;
     const HEVCContext *s = lc->parent;
     const MvField *tab_mvf = s->cur_frame->tab_mvf;
+    const RefPicList *const currRefPicList = s->cur_frame->refPicList;
+    const uint8_t *const cbfLuma = l->cbf_luma;
+    uint8_t *const horizontalBs = l->horizontal_bs;
+    uint8_t *const verticalBs = l->vertical_bs;
+    const int bsWidth = l->bs_width;
+    const int transformSize = 1 << log2_trafo_size;
     int log2_min_pu_size = sps->log2_min_pu_size;
     int log2_min_tu_size = sps->log2_min_tb_size;
     int min_pu_width     = sps->min_pu_width;
@@ -773,22 +783,31 @@ void ff_hevc_deblocking_boundary_strengths(HEVCLocalContext *lc, const HEVCLayer
         int yq_pu =  y0      >> log2_min_pu_size;
         int yp_tu = (y0 - 1) >> log2_min_tu_size;
         int yq_tu =  y0      >> log2_min_tu_size;
+        int cachedXPu = -1;
+        int cachedBs = 0;
+        uint8_t *horizontal = horizontalBs + ((x0 + y0 * bsWidth) >> 2);
 
-            for (i = 0; i < (1 << log2_trafo_size); i += 4) {
+            for (i = 0; i < transformSize; i += 4) {
                 int x_pu = (x0 + i) >> log2_min_pu_size;
                 int x_tu = (x0 + i) >> log2_min_tu_size;
                 const MvField *top  = &tab_mvf[yp_pu * min_pu_width + x_pu];
                 const MvField *curr = &tab_mvf[yq_pu * min_pu_width + x_pu];
-                uint8_t top_cbf_luma  = l->cbf_luma[yp_tu * min_tu_width + x_tu];
-                uint8_t curr_cbf_luma = l->cbf_luma[yq_tu * min_tu_width + x_tu];
+                uint8_t topCbfLuma  = cbfLuma[yp_tu * min_tu_width + x_tu];
+                uint8_t currCbfLuma = cbfLuma[yq_tu * min_tu_width + x_tu];
 
                 if (curr->pred_flag == PF_INTRA || top->pred_flag == PF_INTRA)
                     bs = 2;
-                else if (curr_cbf_luma || top_cbf_luma)
+                else if (currCbfLuma || topCbfLuma)
                     bs = 1;
-                else
-                    bs = boundary_strength(s, curr, top, rpl_top);
-                l->horizontal_bs[((x0 + i) + y0 * l->bs_width) >> 2] = bs;
+                else {
+                    if (x_pu != cachedXPu) {
+                        cachedBs = boundary_strength(currRefPicList, curr, top,
+                                                     rpl_top);
+                        cachedXPu = x_pu;
+                    }
+                    bs = cachedBs;
+                }
+                *horizontal++ = bs;
             }
     }
 
@@ -811,55 +830,99 @@ void ff_hevc_deblocking_boundary_strengths(HEVCLocalContext *lc, const HEVCLayer
         int xq_pu =  x0      >> log2_min_pu_size;
         int xp_tu = (x0 - 1) >> log2_min_tu_size;
         int xq_tu =  x0      >> log2_min_tu_size;
+        int cachedYPu = -1;
+        int cachedBs = 0;
+        uint8_t *vertical = verticalBs + ((x0 + y0 * bsWidth) >> 2);
 
-            for (i = 0; i < (1 << log2_trafo_size); i += 4) {
+            for (i = 0; i < transformSize; i += 4) {
                 int y_pu      = (y0 + i) >> log2_min_pu_size;
                 int y_tu      = (y0 + i) >> log2_min_tu_size;
                 const MvField *left = &tab_mvf[y_pu * min_pu_width + xp_pu];
                 const MvField *curr = &tab_mvf[y_pu * min_pu_width + xq_pu];
-                uint8_t left_cbf_luma = l->cbf_luma[y_tu * min_tu_width + xp_tu];
-                uint8_t curr_cbf_luma = l->cbf_luma[y_tu * min_tu_width + xq_tu];
+                uint8_t leftCbfLuma = cbfLuma[y_tu * min_tu_width + xp_tu];
+                uint8_t currCbfLuma = cbfLuma[y_tu * min_tu_width + xq_tu];
 
                 if (curr->pred_flag == PF_INTRA || left->pred_flag == PF_INTRA)
                     bs = 2;
-                else if (curr_cbf_luma || left_cbf_luma)
+                else if (currCbfLuma || leftCbfLuma)
                     bs = 1;
-                else
-                    bs = boundary_strength(s, curr, left, rpl_left);
-                l->vertical_bs[(x0 + (y0 + i) * l->bs_width) >> 2] = bs;
+                else {
+                    if (y_pu != cachedYPu) {
+                        cachedBs = boundary_strength(currRefPicList, curr, left,
+                                                     rpl_left);
+                        cachedYPu = y_pu;
+                    }
+                    bs = cachedBs;
+                }
+                *vertical = bs;
+                vertical += bsWidth;
             }
     }
 
     if (log2_trafo_size > log2_min_pu_size && !is_intra) {
-        const RefPicList *rpl = s->cur_frame->refPicList;
-
         // bs for TU internal horizontal PU boundaries
-        for (j = 8; j < (1 << log2_trafo_size); j += 8) {
+        for (j = 8; j < transformSize; j += 8) {
             int yp_pu = (y0 + j - 1) >> log2_min_pu_size;
             int yq_pu = (y0 + j)     >> log2_min_pu_size;
+            int cachedXPu = -1;
+            int cachedBs = 0;
+            uint8_t *horizontal = horizontalBs +
+                                  ((x0 + (y0 + j) * bsWidth) >> 2);
 
-            for (i = 0; i < (1 << log2_trafo_size); i += 4) {
+            for (i = 0; i < transformSize; i += 4) {
                 int x_pu = (x0 + i) >> log2_min_pu_size;
                 const MvField *top  = &tab_mvf[yp_pu * min_pu_width + x_pu];
                 const MvField *curr = &tab_mvf[yq_pu * min_pu_width + x_pu];
 
-                bs = boundary_strength(s, curr, top, rpl);
-                l->horizontal_bs[((x0 + i) + (y0 + j) * l->bs_width) >> 2] = bs;
+                if (x_pu != cachedXPu) {
+                    cachedBs = boundary_strength(currRefPicList, curr, top,
+                                                 currRefPicList);
+                    cachedXPu = x_pu;
+                }
+                bs = cachedBs;
+                *horizontal++ = bs;
             }
         }
 
         // bs for TU internal vertical PU boundaries
-        for (j = 0; j < (1 << log2_trafo_size); j += 4) {
-            int y_pu = (y0 + j) >> log2_min_pu_size;
+        if (log2_min_pu_size == 3 && !(y0 & 7)) {
+            for (j = 0; j < transformSize; j += 8) {
+                int y_pu = (y0 + j) >> log2_min_pu_size;
+                uint8_t *vertical0 = verticalBs +
+                                     ((x0 + 8 + (y0 + j) * bsWidth) >> 2);
+                uint8_t *vertical1 = vertical0 + bsWidth;
 
-            for (i = 8; i < (1 << log2_trafo_size); i += 8) {
-                int xp_pu = (x0 + i - 1) >> log2_min_pu_size;
-                int xq_pu = (x0 + i)     >> log2_min_pu_size;
-                const MvField *left = &tab_mvf[y_pu * min_pu_width + xp_pu];
-                const MvField *curr = &tab_mvf[y_pu * min_pu_width + xq_pu];
+                for (i = 8; i < transformSize; i += 8) {
+                    int xp_pu = (x0 + i - 1) >> log2_min_pu_size;
+                    int xq_pu = (x0 + i)     >> log2_min_pu_size;
+                    const MvField *left = &tab_mvf[y_pu * min_pu_width + xp_pu];
+                    const MvField *curr = &tab_mvf[y_pu * min_pu_width + xq_pu];
 
-                bs = boundary_strength(s, curr, left, rpl);
-                l->vertical_bs[((x0 + i) + (y0 + j) * l->bs_width) >> 2] = bs;
+                    bs = boundary_strength(currRefPicList, curr, left,
+                                           currRefPicList);
+                    *vertical0 = bs;
+                    *vertical1 = bs;
+                    vertical0 += 2;
+                    vertical1 += 2;
+                }
+            }
+        } else {
+            for (j = 0; j < transformSize; j += 4) {
+                int y_pu = (y0 + j) >> log2_min_pu_size;
+                uint8_t *vertical = verticalBs +
+                                    ((x0 + 8 + (y0 + j) * bsWidth) >> 2);
+
+                for (i = 8; i < transformSize; i += 8) {
+                    int xp_pu = (x0 + i - 1) >> log2_min_pu_size;
+                    int xq_pu = (x0 + i)     >> log2_min_pu_size;
+                    const MvField *left = &tab_mvf[y_pu * min_pu_width + xp_pu];
+                    const MvField *curr = &tab_mvf[y_pu * min_pu_width + xq_pu];
+
+                    bs = boundary_strength(currRefPicList, curr, left,
+                                           currRefPicList);
+                    *vertical = bs;
+                    vertical += 2;
+                }
             }
         }
     }
