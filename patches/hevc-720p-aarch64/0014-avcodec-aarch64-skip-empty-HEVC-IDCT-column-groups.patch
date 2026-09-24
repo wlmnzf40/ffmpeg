@@ -1,0 +1,73 @@
+From 9c18d11b055d0fc719c61b369e638abe49e453e5 Mon Sep 17 00:00:00 2001
+From: wanglimin40 <wanglimin40@huawei.com>
+Date: Fri, 25 Sep 2026 02:48:58 +0800
+Subject: [PATCH] avcodec/aarch64: skip empty HEVC IDCT column groups
+
+---
+ libavcodec/aarch64/hevcdsp_idct_neon.S | 28 ++++++++++++++++++++++++++
+ 1 file changed, 28 insertions(+)
+
+diff --git a/libavcodec/aarch64/hevcdsp_idct_neon.S b/libavcodec/aarch64/hevcdsp_idct_neon.S
+index 3cac6e6..cd62f1b 100644
+--- a/libavcodec/aarch64/hevcdsp_idct_neon.S
++++ b/libavcodec/aarch64/hevcdsp_idct_neon.S
+@@ -599,14 +599,26 @@ endfunc
+ function ff_hevc_idct_16x16_\bitdepth\()_neon, export=1
+ //r0 - coeffs
+         mov             x15, x30
++        mov             w14, w1
+ 
+         // allocate a temp buffer
+         sub             sp,  sp,  #640
+ 
+ .irp i, 0, 1, 2, 3
++        cmp             w14, #(4 * \i + 3)
++        b.le            91f
+         add             x5,  x0, #(8 * \i)
+         add             x6,  sp, #(8 * \i * 16)
+         bl              func_tr_16x4_firstpass
++        b               92f
++91:
++        movi            v0.16b, #0
++        add             x12, sp, #(8 * \i * 16)
++        stp             q0, q0, [x12]
++        stp             q0, q0, [x12, #32]
++        stp             q0, q0, [x12, #64]
++        stp             q0, q0, [x12, #96]
++92:
+ .endr
+ 
+ .irp i, 0, 1, 2, 3
+@@ -797,13 +809,29 @@ endfunc
+ .macro idct_32x32 bitdepth
+ function ff_hevc_idct_32x32_\bitdepth\()_neon, export=1
+         mov             x15, x30
++        mov             w14, w1
+         // allocate a temp buffer
+         sub             sp,  sp,  #2432
+ 
+ .irp i, 0, 1, 2, 3, 4, 5, 6, 7
++        cmp             w14, #(4 * \i + 3)
++        b.le            91f
+         add             x5, x0, #(8 * \i)
+         add             x11, sp, #(8 * \i * 32)
+         bl              func_tr_32x4_firstpass
++        b               92f
++91:
++        movi            v0.16b, #0
++        add             x12, sp, #(8 * \i * 32)
++        stp             q0, q0, [x12]
++        stp             q0, q0, [x12, #32]
++        stp             q0, q0, [x12, #64]
++        stp             q0, q0, [x12, #96]
++        stp             q0, q0, [x12, #128]
++        stp             q0, q0, [x12, #160]
++        stp             q0, q0, [x12, #192]
++        stp             q0, q0, [x12, #224]
++92:
+ .endr
+ 
+ .irp i, 0, 1, 2, 3, 4, 5, 6, 7
+-- 
+2.43.0
+

@@ -1,0 +1,288 @@
+From de2774442ac71969404a2053853643082617c894 Mon Sep 17 00:00:00 2001
+From: wanglimin40 <wanglimin40@huawei.com>
+Date: Fri, 25 Sep 2026 02:48:16 +0800
+Subject: [PATCH] avfilter/aarch64: add NEON transpose kernels
+
+---
+ libavfilter/aarch64/Makefile                  |   2 +
+ .../aarch64/vf_transpose_init_aarch64.c       |  93 +++++++++++++
+ libavfilter/aarch64/vf_transpose_neon.S       | 123 ++++++++++++++++++
+ libavfilter/transpose.h                       |   1 +
+ libavfilter/vf_transpose.c                    |   8 ++
+ 5 files changed, 227 insertions(+)
+ create mode 100644 libavfilter/aarch64/vf_transpose_init_aarch64.c
+ create mode 100644 libavfilter/aarch64/vf_transpose_neon.S
+
+diff --git a/libavfilter/aarch64/Makefile b/libavfilter/aarch64/Makefile
+index b68209b..b75d2c4 100644
+--- a/libavfilter/aarch64/Makefile
++++ b/libavfilter/aarch64/Makefile
+@@ -1,5 +1,7 @@
+ OBJS-$(CONFIG_BWDIF_FILTER)                  += aarch64/vf_bwdif_init_aarch64.o
+ OBJS-$(CONFIG_NLMEANS_FILTER)                += aarch64/vf_nlmeans_init.o
++OBJS-$(CONFIG_TRANSPOSE_FILTER)              += aarch64/vf_transpose_init_aarch64.o \
++                                                aarch64/vf_transpose_neon.o
+ 
+ NEON-OBJS-$(CONFIG_BWDIF_FILTER)             += aarch64/vf_bwdif_neon.o
+ NEON-OBJS-$(CONFIG_NLMEANS_FILTER)           += aarch64/vf_nlmeans_neon.o
+diff --git a/libavfilter/aarch64/vf_transpose_init_aarch64.c b/libavfilter/aarch64/vf_transpose_init_aarch64.c
+new file mode 100644
+index 0000000..ed7d7d7
+--- /dev/null
++++ b/libavfilter/aarch64/vf_transpose_init_aarch64.c
+@@ -0,0 +1,93 @@
++/*
++ * Copyright (c) 2026 Wang Limin
++ *
++ * This file is part of FFmpeg.
++ *
++ * FFmpeg is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU Lesser General Public
++ * License as published by the Free Software Foundation; either
++ * version 2.1 of the License, or (at your option) any later version.
++ */
++
++#include <arm_neon.h>
++#include <stddef.h>
++#include <stdint.h>
++
++#include "libavutil/attributes.h"
++#include "libavutil/cpu.h"
++#include "libavutil/aarch64/cpu.h"
++#include "libavfilter/transpose.h"
++
++void ff_transpose_8x8_16_neon(uint8_t *src, ptrdiff_t srcLinesize,
++                              uint8_t *dst, ptrdiff_t dstLinesize);
++void ff_transpose_8x8_24_neon(uint8_t *src, ptrdiff_t srcLinesize,
++                              uint8_t *dst, ptrdiff_t dstLinesize);
++
++static inline void transpose_8x8_u8(const uint8x8_t input[8], uint8x8_t output[8])
++{
++    uint8x8x2_t bytes[4];
++    uint16x4x2_t halfwords[4];
++    uint32x2x2_t words[4];
++
++    bytes[0] = vtrn_u8(input[0], input[1]);
++    bytes[1] = vtrn_u8(input[2], input[3]);
++    bytes[2] = vtrn_u8(input[4], input[5]);
++    bytes[3] = vtrn_u8(input[6], input[7]);
++
++    halfwords[0] = vtrn_u16(vreinterpret_u16_u8(bytes[0].val[0]),
++                             vreinterpret_u16_u8(bytes[1].val[0]));
++    halfwords[1] = vtrn_u16(vreinterpret_u16_u8(bytes[0].val[1]),
++                             vreinterpret_u16_u8(bytes[1].val[1]));
++    halfwords[2] = vtrn_u16(vreinterpret_u16_u8(bytes[2].val[0]),
++                             vreinterpret_u16_u8(bytes[3].val[0]));
++    halfwords[3] = vtrn_u16(vreinterpret_u16_u8(bytes[2].val[1]),
++                             vreinterpret_u16_u8(bytes[3].val[1]));
++
++    words[0] = vtrn_u32(vreinterpret_u32_u16(halfwords[0].val[0]),
++                         vreinterpret_u32_u16(halfwords[2].val[0]));
++    words[1] = vtrn_u32(vreinterpret_u32_u16(halfwords[1].val[0]),
++                         vreinterpret_u32_u16(halfwords[3].val[0]));
++    words[2] = vtrn_u32(vreinterpret_u32_u16(halfwords[0].val[1]),
++                         vreinterpret_u32_u16(halfwords[2].val[1]));
++    words[3] = vtrn_u32(vreinterpret_u32_u16(halfwords[1].val[1]),
++                         vreinterpret_u32_u16(halfwords[3].val[1]));
++
++    output[0] = vreinterpret_u8_u32(words[0].val[0]);
++    output[1] = vreinterpret_u8_u32(words[1].val[0]);
++    output[2] = vreinterpret_u8_u32(words[2].val[0]);
++    output[3] = vreinterpret_u8_u32(words[3].val[0]);
++    output[4] = vreinterpret_u8_u32(words[0].val[1]);
++    output[5] = vreinterpret_u8_u32(words[1].val[1]);
++    output[6] = vreinterpret_u8_u32(words[2].val[1]);
++    output[7] = vreinterpret_u8_u32(words[3].val[1]);
++}
++
++static void transpose_8x8_8_neon(uint8_t *src, ptrdiff_t srcLinesize,
++                                 uint8_t *dst, ptrdiff_t dstLinesize)
++{
++    uint8x8_t input[8];
++    uint8x8_t output[8];
++
++    for (int row = 0; row < 8; row++) {
++        input[row] = vld1_u8(src + row * srcLinesize);
++    }
++    transpose_8x8_u8(input, output);
++    for (int row = 0; row < 8; row++) {
++        vst1_u8(dst + row * dstLinesize, output[row]);
++    }
++}
++
++av_cold void ff_transpose_init_aarch64(TransVtable *v, int pixelStep)
++{
++    if (!have_neon(av_get_cpu_flags())) {
++        return;
++    }
++
++    if (pixelStep == 1) {
++        v->transpose_8x8 = transpose_8x8_8_neon;
++    } else if (pixelStep == 2) {
++        v->transpose_8x8 = ff_transpose_8x8_16_neon;
++    } else if (pixelStep == 3) {
++        v->transpose_8x8 = ff_transpose_8x8_24_neon;
++    }
++}
+diff --git a/libavfilter/aarch64/vf_transpose_neon.S b/libavfilter/aarch64/vf_transpose_neon.S
+new file mode 100644
+index 0000000..9073e7a
+--- /dev/null
++++ b/libavfilter/aarch64/vf_transpose_neon.S
+@@ -0,0 +1,123 @@
++/*
++ * AArch64 NEON 8x8 transpose
++ *
++ * This file is part of FFmpeg.
++ *
++ * FFmpeg is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU Lesser General Public
++ * License as published by the Free Software Foundation; either
++ * version 2.1 of the License, or (at your option) any later version.
++ */
++
++#include "libavutil/aarch64/asm.S"
++
++function ff_transpose_8x8_16_neon, export=1
++        ld1             {v0.8h}, [x0], x1
++        ld1             {v1.8h}, [x0], x1
++        ld1             {v2.8h}, [x0], x1
++        ld1             {v3.8h}, [x0], x1
++        ld1             {v4.8h}, [x0], x1
++        ld1             {v5.8h}, [x0], x1
++        ld1             {v6.8h}, [x0], x1
++        ld1             {v7.8h}, [x0]
++
++        trn1            v16.8h, v0.8h, v1.8h
++        trn2            v17.8h, v0.8h, v1.8h
++        trn1            v18.8h, v2.8h, v3.8h
++        trn2            v19.8h, v2.8h, v3.8h
++        trn1            v20.8h, v4.8h, v5.8h
++        trn2            v21.8h, v4.8h, v5.8h
++        trn1            v22.8h, v6.8h, v7.8h
++        trn2            v23.8h, v6.8h, v7.8h
++
++        trn1            v0.4s, v16.4s, v18.4s
++        trn2            v1.4s, v16.4s, v18.4s
++        trn1            v2.4s, v17.4s, v19.4s
++        trn2            v3.4s, v17.4s, v19.4s
++        trn1            v4.4s, v20.4s, v22.4s
++        trn2            v5.4s, v20.4s, v22.4s
++        trn1            v6.4s, v21.4s, v23.4s
++        trn2            v7.4s, v21.4s, v23.4s
++
++        trn1            v16.2d, v0.2d, v4.2d
++        trn1            v17.2d, v2.2d, v6.2d
++        trn1            v18.2d, v1.2d, v5.2d
++        trn1            v19.2d, v3.2d, v7.2d
++        trn2            v20.2d, v0.2d, v4.2d
++        trn2            v21.2d, v2.2d, v6.2d
++        trn2            v22.2d, v1.2d, v5.2d
++        trn2            v23.2d, v3.2d, v7.2d
++
++        st1             {v16.8h}, [x2], x3
++        st1             {v17.8h}, [x2], x3
++        st1             {v18.8h}, [x2], x3
++        st1             {v19.8h}, [x2], x3
++        st1             {v20.8h}, [x2], x3
++        st1             {v21.8h}, [x2], x3
++        st1             {v22.8h}, [x2], x3
++        st1             {v23.8h}, [x2]
++        ret
++endfunc
++
++.macro transpose8_u8 r0, r1, r2, r3, r4, r5, r6, r7
++        trn1            v24.8b, \r0\().8b, \r1\().8b
++        trn2            v25.8b, \r0\().8b, \r1\().8b
++        trn1            v26.8b, \r2\().8b, \r3\().8b
++        trn2            v27.8b, \r2\().8b, \r3\().8b
++        trn1            v28.8b, \r4\().8b, \r5\().8b
++        trn2            v29.8b, \r4\().8b, \r5\().8b
++        trn1            v30.8b, \r6\().8b, \r7\().8b
++        trn2            v31.8b, \r6\().8b, \r7\().8b
++
++        trn1            \r0\().4h, v24.4h, v26.4h
++        trn2            \r1\().4h, v24.4h, v26.4h
++        trn1            \r2\().4h, v25.4h, v27.4h
++        trn2            \r3\().4h, v25.4h, v27.4h
++        trn1            \r4\().4h, v28.4h, v30.4h
++        trn2            \r5\().4h, v28.4h, v30.4h
++        trn1            \r6\().4h, v29.4h, v31.4h
++        trn2            \r7\().4h, v29.4h, v31.4h
++
++        trn1            v24.2s, \r0\().2s, \r4\().2s
++        trn1            v25.2s, \r2\().2s, \r6\().2s
++        trn1            v26.2s, \r1\().2s, \r5\().2s
++        trn1            v27.2s, \r3\().2s, \r7\().2s
++        trn2            v28.2s, \r0\().2s, \r4\().2s
++        trn2            v29.2s, \r2\().2s, \r6\().2s
++        trn2            v30.2s, \r1\().2s, \r5\().2s
++        trn2            v31.2s, \r3\().2s, \r7\().2s
++
++        mov             \r0\().8b, v24.8b
++        mov             \r1\().8b, v25.8b
++        mov             \r2\().8b, v26.8b
++        mov             \r3\().8b, v27.8b
++        mov             \r4\().8b, v28.8b
++        mov             \r5\().8b, v29.8b
++        mov             \r6\().8b, v30.8b
++        mov             \r7\().8b, v31.8b
++.endm
++
++function ff_transpose_8x8_24_neon, export=1
++        ld3             {v0.8b, v1.8b, v2.8b}, [x0], x1
++        ld3             {v3.8b, v4.8b, v5.8b}, [x0], x1
++        ld3             {v6.8b, v7.8b, v8.8b}, [x0], x1
++        ld3             {v9.8b, v10.8b, v11.8b}, [x0], x1
++        ld3             {v12.8b, v13.8b, v14.8b}, [x0], x1
++        ld3             {v15.8b, v16.8b, v17.8b}, [x0], x1
++        ld3             {v18.8b, v19.8b, v20.8b}, [x0], x1
++        ld3             {v21.8b, v22.8b, v23.8b}, [x0]
++
++        transpose8_u8   v0, v3, v6, v9, v12, v15, v18, v21
++        transpose8_u8   v1, v4, v7, v10, v13, v16, v19, v22
++        transpose8_u8   v2, v5, v8, v11, v14, v17, v20, v23
++
++        st3             {v0.8b, v1.8b, v2.8b}, [x2], x3
++        st3             {v3.8b, v4.8b, v5.8b}, [x2], x3
++        st3             {v6.8b, v7.8b, v8.8b}, [x2], x3
++        st3             {v9.8b, v10.8b, v11.8b}, [x2], x3
++        st3             {v12.8b, v13.8b, v14.8b}, [x2], x3
++        st3             {v15.8b, v16.8b, v17.8b}, [x2], x3
++        st3             {v18.8b, v19.8b, v20.8b}, [x2], x3
++        st3             {v21.8b, v22.8b, v23.8b}, [x2]
++        ret
++endfunc
+diff --git a/libavfilter/transpose.h b/libavfilter/transpose.h
+index 4e850ef..58e9c7f 100644
+--- a/libavfilter/transpose.h
++++ b/libavfilter/transpose.h
+@@ -46,5 +46,6 @@ typedef struct TransVtable {
+ } TransVtable;
+ 
+ void ff_transpose_init_x86(TransVtable *v, int pixstep);
++void ff_transpose_init_aarch64(TransVtable *v, int pixelStep);
+ 
+ #endif
+diff --git a/libavfilter/vf_transpose.c b/libavfilter/vf_transpose.c
+index d283624..92f4da6 100644
+--- a/libavfilter/vf_transpose.c
++++ b/libavfilter/vf_transpose.c
+@@ -243,6 +243,14 @@ static int config_props_output(AVFilterLink *outlink)
+     }
+ #endif
+ 
++#if ARCH_AARCH64
++    for (int i = 0; i < 4; i++) {
++        TransVtable *v = &s->vtables[i];
++
++        ff_transpose_init_aarch64(v, s->pixsteps[i]);
++    }
++#endif
++
+     av_log(ctx, AV_LOG_VERBOSE,
+            "w:%d h:%d dir:%d -> w:%d h:%d rotation:%s vflip:%d\n",
+            inlink->w, inlink->h, s->dir, outlink->w, outlink->h,
+-- 
+2.43.0
+
