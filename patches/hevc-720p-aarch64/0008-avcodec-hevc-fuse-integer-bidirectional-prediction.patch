@@ -1,0 +1,311 @@
+From f92e8a49872c1c848e7d1eb87d61421827cf1ceb Mon Sep 17 00:00:00 2001
+From: wanglimin40 <wanglimin40@huawei.com>
+Date: Thu, 24 Sep 2026 13:56:14 +0800
+Subject: [PATCH] avcodec/hevc: fuse integer bidirectional prediction
+
+---
+ libavcodec/aarch64/h26x/epel_neon.S       | 90 +++++++++++++++++++++++
+ libavcodec/aarch64/hevcdsp_init_aarch64.c |  5 ++
+ libavcodec/hevc/dsp.c                     |  1 +
+ libavcodec/hevc/dsp.h                     |  4 +
+ libavcodec/hevc/dsp_template.c            | 22 ++++++
+ libavcodec/hevc/hevcdec.c                 | 14 ++++
+ tests/checkasm/hevc_pel.c                 | 59 +++++++++++++++
+ 7 files changed, 195 insertions(+)
+
+diff --git a/libavcodec/aarch64/h26x/epel_neon.S b/libavcodec/aarch64/h26x/epel_neon.S
+index e44a448..92ed267 100644
+--- a/libavcodec/aarch64/h26x/epel_neon.S
++++ b/libavcodec/aarch64/h26x/epel_neon.S
+@@ -307,6 +307,96 @@ function ff_hevc_put_hevc_pel_bi_pixels4_8_neon, export=1
+         ret
+ endfunc
+ 
++function ff_hevc_put_hevc_pel_bi_direct_8_neon, export=1
++        cmp             w7,  #32
++        b.eq            .Lpel_bi_direct32
++        cmp             w7,  #16
++        b.eq            .Lpel_bi_direct16
++        cmp             w7,  #8
++        b.eq            .Lpel_bi_direct8
++        cmp             w7,  #64
++        b.eq            .Lpel_bi_direct64
++1:
++        mov             x8,  x2
++        mov             x9,  x4
++        mov             x10, x0
++        mov             w11, w7
++2:
++        cmp             w11, #16
++        b.lt            3f
++        ld1             {v0.16b}, [x8],  #16
++        ld1             {v1.16b}, [x9],  #16
++        urhadd          v0.16b, v0.16b, v1.16b
++        st1             {v0.16b}, [x10], #16
++        sub             w11, w11, #16
++        b               2b
++3:
++        tbz             w11, #3, 4f
++        ld1             {v0.8b}, [x8],  #8
++        ld1             {v1.8b}, [x9],  #8
++        urhadd          v0.8b, v0.8b, v1.8b
++        st1             {v0.8b}, [x10], #8
++4:
++        tbz             w11, #2, 5f
++        ld1             {v0.s}[0], [x8],  #4
++        ld1             {v1.s}[0], [x9],  #4
++        urhadd          v0.8b, v0.8b, v1.8b
++        st1             {v0.s}[0], [x10], #4
++5:
++        tbz             w11, #1, 6f
++        ld1             {v0.h}[0], [x8],  #2
++        ld1             {v1.h}[0], [x9],  #2
++        urhadd          v0.8b, v0.8b, v1.8b
++        st1             {v0.h}[0], [x10], #2
++6:
++        add             x0,  x0, x1
++        add             x2,  x2, x3
++        add             x4,  x4, x5
++        subs            w6,  w6, #1
++        b.ne            1b
++        ret
++
++.Lpel_bi_direct8:
++        ld1             {v0.8b}, [x2], x3
++        ld1             {v1.8b}, [x4], x5
++        urhadd          v0.8b, v0.8b, v1.8b
++        st1             {v0.8b}, [x0], x1
++        subs            w6, w6, #1
++        b.ne            .Lpel_bi_direct8
++        ret
++
++.Lpel_bi_direct16:
++        ld1             {v0.16b}, [x2], x3
++        ld1             {v1.16b}, [x4], x5
++        urhadd          v0.16b, v0.16b, v1.16b
++        st1             {v0.16b}, [x0], x1
++        subs            w6, w6, #1
++        b.ne            .Lpel_bi_direct16
++        ret
++
++.Lpel_bi_direct32:
++        ld1             {v0.16b-v1.16b}, [x2], x3
++        ld1             {v2.16b-v3.16b}, [x4], x5
++        urhadd          v0.16b, v0.16b, v2.16b
++        urhadd          v1.16b, v1.16b, v3.16b
++        st1             {v0.16b-v1.16b}, [x0], x1
++        subs            w6, w6, #1
++        b.ne            .Lpel_bi_direct32
++        ret
++
++.Lpel_bi_direct64:
++        ld1             {v0.16b-v3.16b}, [x2], x3
++        ld1             {v4.16b-v7.16b}, [x4], x5
++        urhadd          v0.16b, v0.16b, v4.16b
++        urhadd          v1.16b, v1.16b, v5.16b
++        urhadd          v2.16b, v2.16b, v6.16b
++        urhadd          v3.16b, v3.16b, v7.16b
++        st1             {v0.16b-v3.16b}, [x0], x1
++        subs            w6, w6, #1
++        b.ne            .Lpel_bi_direct64
++        ret
++endfunc
++
+ function ff_hevc_put_hevc_pel_bi_pixels6_8_neon, export=1
+         mov             x10, #(HEVC_MAX_PB_SIZE * 2)
+         sub             x1, x1, #4
+diff --git a/libavcodec/aarch64/hevcdsp_init_aarch64.c b/libavcodec/aarch64/hevcdsp_init_aarch64.c
+index 386d7c5..aa6500b 100644
+--- a/libavcodec/aarch64/hevcdsp_init_aarch64.c
++++ b/libavcodec/aarch64/hevcdsp_init_aarch64.c
+@@ -92,6 +92,10 @@ void ff_hevc_idct_8x8_dc_10_neon(int16_t *coeffs);
+ void ff_hevc_idct_16x16_dc_10_neon(int16_t *coeffs);
+ void ff_hevc_idct_32x32_dc_10_neon(int16_t *coeffs);
+ void ff_hevc_transform_luma_4x4_neon_8(int16_t *coeffs);
++void ff_hevc_put_hevc_pel_bi_direct_8_neon(uint8_t *dst, ptrdiff_t dststride,
++                                            const uint8_t *src0, ptrdiff_t src0stride,
++                                            const uint8_t *src1, ptrdiff_t src1stride,
++                                            int height, int width);
+ 
+ #define NEON8_FNASSIGN(member, v, h, fn, ext) \
+         member[1][v][h] = ff_hevc_put_hevc_##fn##4_8_neon##ext;  \
+@@ -136,6 +140,7 @@ av_cold void ff_hevc_dsp_init_aarch64(HEVCDSPContext *c, const int bit_depth)
+     if (!have_neon(cpu_flags)) return;
+ 
+     if (bit_depth == 8) {
++        c->put_hevc_pel_bi_direct      = ff_hevc_put_hevc_pel_bi_direct_8_neon;
+         c->hevc_h_loop_filter_luma     = ff_hevc_h_loop_filter_luma_8_neon;
+         c->hevc_v_loop_filter_luma     = ff_hevc_v_loop_filter_luma_8_neon;
+         c->hevc_h_loop_filter_chroma   = ff_hevc_h_loop_filter_chroma_8_neon;
+diff --git a/libavcodec/hevc/dsp.c b/libavcodec/hevc/dsp.c
+index 60f0592..6d7ed67 100644
+--- a/libavcodec/hevc/dsp.c
++++ b/libavcodec/hevc/dsp.c
+@@ -197,6 +197,7 @@ void ff_hevc_dsp_init(HEVCDSPContext *hevcdsp, int bit_depth)
+ 
+ #define HEVC_DSP(depth)                                                     \
+     hevcdsp->put_pcm                = FUNC(put_pcm, depth);                 \
++    hevcdsp->put_hevc_pel_bi_direct = FUNC(put_hevc_pel_bi_direct, depth); \
+     hevcdsp->add_residual[0]        = FUNC(add_residual4x4, depth);         \
+     hevcdsp->add_residual[1]        = FUNC(add_residual8x8, depth);         \
+     hevcdsp->add_residual[2]        = FUNC(add_residual16x16, depth);       \
+diff --git a/libavcodec/hevc/dsp.h b/libavcodec/hevc/dsp.h
+index 02b8e0e..6ed698b 100644
+--- a/libavcodec/hevc/dsp.h
++++ b/libavcodec/hevc/dsp.h
+@@ -85,6 +85,10 @@ typedef struct HEVCDSPContext {
+                                          const uint8_t *_src, ptrdiff_t _srcstride, const int16_t *src2,
+                                          int height, int denom, int wx0, int wx1,
+                                          int ox0, int ox1, intptr_t mx, intptr_t my, int width);
++    void (*put_hevc_pel_bi_direct)(uint8_t *dst, ptrdiff_t dststride,
++                                   const uint8_t *src0, ptrdiff_t src0stride,
++                                   const uint8_t *src1, ptrdiff_t src1stride,
++                                   int height, int width);
+     void (*put_hevc_epel[10][2][2])(int16_t *dst, const uint8_t *src, ptrdiff_t srcstride,
+                                     int height, intptr_t mx, intptr_t my, int width);
+ 
+diff --git a/libavcodec/hevc/dsp_template.c b/libavcodec/hevc/dsp_template.c
+index a0f79c2..8fe0cf5 100644
+--- a/libavcodec/hevc/dsp_template.c
++++ b/libavcodec/hevc/dsp_template.c
+@@ -372,6 +372,28 @@ static void FUNC(put_hevc_pel_bi_pixels)(uint8_t *_dst, ptrdiff_t _dststride, co
+     }
+ }
+ 
++static void FUNC(put_hevc_pel_bi_direct)(uint8_t *_dst, ptrdiff_t _dststride,
++                                         const uint8_t *_src0, ptrdiff_t _src0stride,
++                                         const uint8_t *_src1, ptrdiff_t _src1stride,
++                                         int height, int width)
++{
++    pixel *dst = (pixel *)_dst;
++    const pixel *src0 = (const pixel *)_src0;
++    const pixel *src1 = (const pixel *)_src1;
++    const ptrdiff_t dststride = _dststride / sizeof(pixel);
++    const ptrdiff_t src0stride = _src0stride / sizeof(pixel);
++    const ptrdiff_t src1stride = _src1stride / sizeof(pixel);
++
++    for (int y = 0; y < height; y++) {
++        for (int x = 0; x < width; x++) {
++            dst[x] = (src0[x] + src1[x] + 1) >> 1;
++        }
++        dst += dststride;
++        src0 += src0stride;
++        src1 += src1stride;
++    }
++}
++
+ static void FUNC(put_hevc_pel_bi_w_pixels)(uint8_t *_dst, ptrdiff_t _dststride, const uint8_t *_src, ptrdiff_t _srcstride,
+                                            const int16_t *src2,
+                                            int height, int denom, int wx0, int wx1,
+diff --git a/libavcodec/hevc/hevcdec.c b/libavcodec/hevc/hevcdec.c
+index 6f0ae12..d3313de 100644
+--- a/libavcodec/hevc/hevcdec.c
++++ b/libavcodec/hevc/hevcdec.c
+@@ -1773,6 +1773,13 @@ static void luma_mc_bi(HEVCLocalContext *lc,
+         src1stride = edge_emu_stride;
+     }
+ 
++    if (!weight_flag && !(mx0 | my0 | mx1 | my1)) {
++        s->hevcdsp.put_hevc_pel_bi_direct(dst, dststride,
++                                          src0, src0stride, src1, src1stride,
++                                          block_h, block_w);
++        return;
++    }
++
+     s->hevcdsp.put_hevc_qpel[idx][!!my0][!!mx0](lc->tmp, src0, src0stride,
+                                                 block_h, mx0, my0, block_w);
+     if (!weight_flag)
+@@ -1951,6 +1958,13 @@ static void chroma_mc_bi(HEVCLocalContext *lc,
+         src2stride = edge_emu_stride;
+     }
+ 
++    if (!weight_flag && !(mx0 | my0 | mx1 | my1)) {
++        s->hevcdsp.put_hevc_pel_bi_direct(dst0, dststride,
++                                          src1, src1stride, src2, src2stride,
++                                          block_h, block_w);
++        return;
++    }
++
+     s->hevcdsp.put_hevc_epel[idx][!!my0][!!mx0](lc->tmp, src1, src1stride,
+                                                 block_h, _mx0, _my0, block_w);
+     if (!weight_flag)
+diff --git a/tests/checkasm/hevc_pel.c b/tests/checkasm/hevc_pel.c
+index d9fa56d..bbec8f0 100644
+--- a/tests/checkasm/hevc_pel.c
++++ b/tests/checkasm/hevc_pel.c
+@@ -280,6 +280,64 @@ static void checkasm_check_hevc_qpel_bi(void)
+     report("qpel_bi");
+ }
+ 
++static void CheckHevcPelBiDirect(void)
++{
++    LOCAL_ALIGNED_32(uint8_t, src00, [BUF_SIZE]);
++    LOCAL_ALIGNED_32(uint8_t, src01, [BUF_SIZE]);
++    LOCAL_ALIGNED_32(uint8_t, src10, [BUF_SIZE]);
++    LOCAL_ALIGNED_32(uint8_t, src11, [BUF_SIZE]);
++    LOCAL_ALIGNED_32(uint8_t, dst0, [BUF_SIZE]);
++    LOCAL_ALIGNED_32(uint8_t, dst1, [BUF_SIZE]);
++
++    HEVCDSPContext h;
++    int bitDepth;
++    int size;
++    declare_func(void, uint8_t *dst, ptrdiff_t dststride,
++                 const uint8_t *source0, ptrdiff_t source0stride,
++                 const uint8_t *source1, ptrdiff_t source1stride,
++                 int height, int width);
++
++    for (bitDepth = 8; bitDepth <= 12; bitDepth++) {
++        const ptrdiff_t stride = MAX_PB_SIZE * ((bitDepth + 7) / 8);
++        const uint32_t mask = pixel_mask[bitDepth - 8];
++
++        ff_hevc_dsp_init(&h, bitDepth);
++        for (size = 1; size < 10; size++) {
++            if (check_func(h.put_hevc_pel_bi_direct,
++                           "put_hevc_pel_bi_direct_%dx%d_%d",
++                           sizes[size], sizes[size], bitDepth)) {
++                for (int offset = 0; offset < BUF_SIZE; offset += 4) {
++                    const uint32_t value0 = rnd() & mask;
++                    const uint32_t value1 = rnd() & mask;
++
++                    AV_WN32A(src00 + offset, value0);
++                    AV_WN32A(src01 + offset, value0);
++                    AV_WN32A(src10 + offset, value1);
++                    AV_WN32A(src11 + offset, value1);
++                }
++                call_ref(dst0, stride, src00, stride, src10, stride,
++                         sizes[size], sizes[size]);
++                call_new(dst1, stride, src01, stride, src11, stride,
++                         sizes[size], sizes[size]);
++                if (bitDepth > 8) {
++                    checkasm_check(uint16_t,
++                                   (const uint16_t *)dst0, stride,
++                                   (const uint16_t *)dst1, stride,
++                                   size[sizes], size[sizes], "dst");
++                } else {
++                    checkasm_check(uint8_t,
++                                   (const uint8_t *)dst0, stride,
++                                   (const uint8_t *)dst1, stride,
++                                   size[sizes], size[sizes], "dst");
++                }
++                bench_new(dst1, stride, src01, stride, src11, stride,
++                          sizes[size], sizes[size]);
++            }
++        }
++    }
++    report("pel_bi_direct");
++}
++
+ static void checkasm_check_hevc_qpel_bi_w(void)
+ {
+     LOCAL_ALIGNED_32(uint8_t, buf0, [BUF_SIZE + SRC_EXTRA]);
+@@ -610,6 +668,7 @@ void checkasm_check_hevc_pel(void)
+     checkasm_check_hevc_qpel_uni();
+     checkasm_check_hevc_qpel_uni_w();
+     checkasm_check_hevc_qpel_bi();
++    CheckHevcPelBiDirect();
+     checkasm_check_hevc_qpel_bi_w();
+     checkasm_check_hevc_epel();
+     checkasm_check_hevc_epel_uni();
+-- 
+2.43.0
+
