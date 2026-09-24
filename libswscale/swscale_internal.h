@@ -986,6 +986,13 @@ void ff_sws_init_swscale_ppc(SwsContext *c);
 void ff_sws_init_swscale_vsx(SwsContext *c);
 void ff_sws_init_swscale_x86(SwsContext *c);
 void ff_sws_init_swscale_aarch64(SwsContext *c);
+void ff_yuv2rgb24_X_neon(SwsContext *c, const int16_t *lumFilter,
+                         const int16_t **lumSrc, int lumFilterSize,
+                         const int16_t *chrFilter,
+                         const int16_t **chrUSrc,
+                         const int16_t **chrVSrc, int chrFilterSize,
+                         const int16_t **alpSrc, uint8_t *dest,
+                         int dstW, int y);
 void ff_sws_init_swscale_arm(SwsContext *c);
 void ff_sws_init_swscale_loongarch(SwsContext *c);
 void ff_sws_init_swscale_riscv(SwsContext *c);

@@ -249,6 +249,11 @@ av_cold void ff_sws_init_swscale_aarch64(SwsContext *c)
         if (c->dstBpc == 8) {
             c->yuv2planeX = ff_yuv2planeX_8_neon;
         }
+        if (c->dstFormat == AV_PIX_FMT_RGB24 &&
+            c->vLumFilterSize == 2 && c->vChrFilterSize == 4 &&
+            !(c->dstW & 15)) {
+            c->yuv2packedX = ff_yuv2rgb24_X_neon;
+        }
         switch (c->srcFormat) {
         case AV_PIX_FMT_ABGR:
             c->lumToYV12 = ff_abgr32ToY_neon;
