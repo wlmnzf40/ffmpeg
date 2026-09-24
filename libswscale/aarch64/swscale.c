@@ -17,6 +17,8 @@
  */
 
 #include "config.h"
+#include <arm_neon.h>
+
 #include "libavutil/attributes.h"
 #include "libswscale/swscale.h"
 #include "libswscale/swscale_internal.h"
@@ -41,6 +43,41 @@ void ff_hscale16to19_X4_neon_asm(int shift, int16_t *_dst, int dstW,
                       const uint8_t *_src, const int16_t *filter,
                       const int32_t *filterPos, int filterSize);
 
+static av_always_inline int is_hscale16_identity(int shift, int dstW,
+                                                 const int16_t *filter,
+                                                 const int32_t *filterPos,
+                                                 int filterSize)
+{
+    const int middle = dstW >> 1;
+    const int last = dstW - 1;
+
+    return shift == 9 && filterSize == 4 && dstW >= 8 &&
+           filterPos[0] == 0 && filter[0] == 16384 &&
+           !(filter[1] | filter[2] | filter[3]) &&
+           filterPos[middle] == middle && filter[middle * 4] == 16384 &&
+           !(filter[middle * 4 + 1] | filter[middle * 4 + 2] |
+             filter[middle * 4 + 3]) &&
+           filterPos[last] == dstW - 4 && filter[last * 4 + 3] == 16384 &&
+           !(filter[last * 4] | filter[last * 4 + 1] |
+             filter[last * 4 + 2]);
+}
+
+static void hscale16to15_identity_neon(int16_t *dst, int dstW,
+                                       const uint8_t *srcBytes)
+{
+    const uint16_t *src = (const uint16_t *)srcBytes;
+    int x = 0;
+
+    for (; x + 8 <= dstW; x += 8) {
+        uint16x8_t pixels = vshlq_n_u16(vld1q_u16(src + x), 5);
+
+        vst1q_s16(dst + x, vreinterpretq_s16_u16(pixels));
+    }
+    for (; x < dstW; x++) {
+        dst[x] = src[x] << 5;
+    }
+}
+
 static void ff_hscale16to15_4_neon(SwsContext *c, int16_t *_dst, int dstW,
                       const uint8_t *_src, const int16_t *filter,
                       const int32_t *filterPos, int filterSize)
@@ -52,6 +89,10 @@ static void ff_hscale16to15_4_neon(SwsContext *c, int16_t *_dst, int dstW,
         sh = isAnyRGB(c->srcFormat) || c->srcFormat==AV_PIX_FMT_PAL8 ? 13 : (desc->comp[0].depth - 1);
     } else if (desc->flags & AV_PIX_FMT_FLAG_FLOAT) { /* float input are process like uint 16bpc */
         sh = 16 - 1;
+    }
+    if (is_hscale16_identity(sh, dstW, filter, filterPos, filterSize)) {
+        hscale16to15_identity_neon(_dst, dstW, _src);
+        return;
     }
     ff_hscale16to15_4_neon_asm(sh, _dst, dstW, _src, filter, filterPos, filterSize);
 
