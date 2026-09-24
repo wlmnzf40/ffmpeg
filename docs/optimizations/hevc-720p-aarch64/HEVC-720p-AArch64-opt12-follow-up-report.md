@@ -50,6 +50,8 @@ PMU 数据通过 `perf stat -e task-clock,cycles,instructions` 采集。测试�
 - 优化点 6 走读：[`06-hevc-boundary-strength-pu-reuse.md`](06-hevc-boundary-strength-pu-reuse.md)
 - 优化点 7 走读：[`07-hevc-reference-index-fast-path.md`](07-hevc-reference-index-fast-path.md)
 - 优化点 8 走读：[`08-hevc-direct-integer-bipred.md`](08-hevc-direct-integer-bipred.md)
+- 后续未合入候选及量化依据：
+  [`09-rejected-follow-up-candidates.md`](09-rejected-follow-up-candidates.md)
 - 对应补丁位于 `patches/hevc-720p-aarch64/` 的 `0005`、`0006`、`0007`、`0008`。
 
 四个新补丁按 0005～0008 的顺序叠加在 patch1/2 上；应用时可以跳过原 patch3
