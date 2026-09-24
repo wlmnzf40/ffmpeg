@@ -85,6 +85,10 @@ typedef struct HEVCDSPContext {
                                          const uint8_t *_src, ptrdiff_t _srcstride, const int16_t *src2,
                                          int height, int denom, int wx0, int wx1,
                                          int ox0, int ox1, intptr_t mx, intptr_t my, int width);
+    void (*put_hevc_pel_bi_direct)(uint8_t *dst, ptrdiff_t dststride,
+                                   const uint8_t *src0, ptrdiff_t src0stride,
+                                   const uint8_t *src1, ptrdiff_t src1stride,
+                                   int height, int width);
     void (*put_hevc_epel[10][2][2])(int16_t *dst, const uint8_t *src, ptrdiff_t srcstride,
                                     int height, intptr_t mx, intptr_t my, int width);
 

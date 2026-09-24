@@ -1773,6 +1773,13 @@ static void luma_mc_bi(HEVCLocalContext *lc,
         src1stride = edge_emu_stride;
     }
 
+    if (!weight_flag && !(mx0 | my0 | mx1 | my1)) {
+        s->hevcdsp.put_hevc_pel_bi_direct(dst, dststride,
+                                          src0, src0stride, src1, src1stride,
+                                          block_h, block_w);
+        return;
+    }
+
     s->hevcdsp.put_hevc_qpel[idx][!!my0][!!mx0](lc->tmp, src0, src0stride,
                                                 block_h, mx0, my0, block_w);
     if (!weight_flag)
@@ -1949,6 +1956,13 @@ static void chroma_mc_bi(HEVCLocalContext *lc,
 
         src2 = lc->edge_emu_buffer2 + buf_offset1;
         src2stride = edge_emu_stride;
+    }
+
+    if (!weight_flag && !(mx0 | my0 | mx1 | my1)) {
+        s->hevcdsp.put_hevc_pel_bi_direct(dst0, dststride,
+                                          src1, src1stride, src2, src2stride,
+                                          block_h, block_w);
+        return;
     }
 
     s->hevcdsp.put_hevc_epel[idx][!!my0][!!mx0](lc->tmp, src1, src1stride,

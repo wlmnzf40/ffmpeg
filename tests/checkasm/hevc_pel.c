@@ -280,6 +280,64 @@ static void checkasm_check_hevc_qpel_bi(void)
     report("qpel_bi");
 }
 
+static void CheckHevcPelBiDirect(void)
+{
+    LOCAL_ALIGNED_32(uint8_t, src00, [BUF_SIZE]);
+    LOCAL_ALIGNED_32(uint8_t, src01, [BUF_SIZE]);
+    LOCAL_ALIGNED_32(uint8_t, src10, [BUF_SIZE]);
+    LOCAL_ALIGNED_32(uint8_t, src11, [BUF_SIZE]);
+    LOCAL_ALIGNED_32(uint8_t, dst0, [BUF_SIZE]);
+    LOCAL_ALIGNED_32(uint8_t, dst1, [BUF_SIZE]);
+
+    HEVCDSPContext h;
+    int bitDepth;
+    int size;
+    declare_func(void, uint8_t *dst, ptrdiff_t dststride,
+                 const uint8_t *source0, ptrdiff_t source0stride,
+                 const uint8_t *source1, ptrdiff_t source1stride,
+                 int height, int width);
+
+    for (bitDepth = 8; bitDepth <= 12; bitDepth++) {
+        const ptrdiff_t stride = MAX_PB_SIZE * ((bitDepth + 7) / 8);
+        const uint32_t mask = pixel_mask[bitDepth - 8];
+
+        ff_hevc_dsp_init(&h, bitDepth);
+        for (size = 1; size < 10; size++) {
+            if (check_func(h.put_hevc_pel_bi_direct,
+                           "put_hevc_pel_bi_direct_%dx%d_%d",
+                           sizes[size], sizes[size], bitDepth)) {
+                for (int offset = 0; offset < BUF_SIZE; offset += 4) {
+                    const uint32_t value0 = rnd() & mask;
+                    const uint32_t value1 = rnd() & mask;
+
+                    AV_WN32A(src00 + offset, value0);
+                    AV_WN32A(src01 + offset, value0);
+                    AV_WN32A(src10 + offset, value1);
+                    AV_WN32A(src11 + offset, value1);
+                }
+                call_ref(dst0, stride, src00, stride, src10, stride,
+                         sizes[size], sizes[size]);
+                call_new(dst1, stride, src01, stride, src11, stride,
+                         sizes[size], sizes[size]);
+                if (bitDepth > 8) {
+                    checkasm_check(uint16_t,
+                                   (const uint16_t *)dst0, stride,
+                                   (const uint16_t *)dst1, stride,
+                                   size[sizes], size[sizes], "dst");
+                } else {
+                    checkasm_check(uint8_t,
+                                   (const uint8_t *)dst0, stride,
+                                   (const uint8_t *)dst1, stride,
+                                   size[sizes], size[sizes], "dst");
+                }
+                bench_new(dst1, stride, src01, stride, src11, stride,
+                          sizes[size], sizes[size]);
+            }
+        }
+    }
+    report("pel_bi_direct");
+}
+
 static void checkasm_check_hevc_qpel_bi_w(void)
 {
     LOCAL_ALIGNED_32(uint8_t, buf0, [BUF_SIZE + SRC_EXTRA]);
@@ -610,6 +668,7 @@ void checkasm_check_hevc_pel(void)
     checkasm_check_hevc_qpel_uni();
     checkasm_check_hevc_qpel_uni_w();
     checkasm_check_hevc_qpel_bi();
+    CheckHevcPelBiDirect();
     checkasm_check_hevc_qpel_bi_w();
     checkasm_check_hevc_epel();
     checkasm_check_hevc_epel_uni();

@@ -307,6 +307,96 @@ function ff_hevc_put_hevc_pel_bi_pixels4_8_neon, export=1
         ret
 endfunc
 
+function ff_hevc_put_hevc_pel_bi_direct_8_neon, export=1
+        cmp             w7,  #32
+        b.eq            .Lpel_bi_direct32
+        cmp             w7,  #16
+        b.eq            .Lpel_bi_direct16
+        cmp             w7,  #8
+        b.eq            .Lpel_bi_direct8
+        cmp             w7,  #64
+        b.eq            .Lpel_bi_direct64
+1:
+        mov             x8,  x2
+        mov             x9,  x4
+        mov             x10, x0
+        mov             w11, w7
+2:
+        cmp             w11, #16
+        b.lt            3f
+        ld1             {v0.16b}, [x8],  #16
+        ld1             {v1.16b}, [x9],  #16
+        urhadd          v0.16b, v0.16b, v1.16b
+        st1             {v0.16b}, [x10], #16
+        sub             w11, w11, #16
+        b               2b
+3:
+        tbz             w11, #3, 4f
+        ld1             {v0.8b}, [x8],  #8
+        ld1             {v1.8b}, [x9],  #8
+        urhadd          v0.8b, v0.8b, v1.8b
+        st1             {v0.8b}, [x10], #8
+4:
+        tbz             w11, #2, 5f
+        ld1             {v0.s}[0], [x8],  #4
+        ld1             {v1.s}[0], [x9],  #4
+        urhadd          v0.8b, v0.8b, v1.8b
+        st1             {v0.s}[0], [x10], #4
+5:
+        tbz             w11, #1, 6f
+        ld1             {v0.h}[0], [x8],  #2
+        ld1             {v1.h}[0], [x9],  #2
+        urhadd          v0.8b, v0.8b, v1.8b
+        st1             {v0.h}[0], [x10], #2
+6:
+        add             x0,  x0, x1
+        add             x2,  x2, x3
+        add             x4,  x4, x5
+        subs            w6,  w6, #1
+        b.ne            1b
+        ret
+
+.Lpel_bi_direct8:
+        ld1             {v0.8b}, [x2], x3
+        ld1             {v1.8b}, [x4], x5
+        urhadd          v0.8b, v0.8b, v1.8b
+        st1             {v0.8b}, [x0], x1
+        subs            w6, w6, #1
+        b.ne            .Lpel_bi_direct8
+        ret
+
+.Lpel_bi_direct16:
+        ld1             {v0.16b}, [x2], x3
+        ld1             {v1.16b}, [x4], x5
+        urhadd          v0.16b, v0.16b, v1.16b
+        st1             {v0.16b}, [x0], x1
+        subs            w6, w6, #1
+        b.ne            .Lpel_bi_direct16
+        ret
+
+.Lpel_bi_direct32:
+        ld1             {v0.16b-v1.16b}, [x2], x3
+        ld1             {v2.16b-v3.16b}, [x4], x5
+        urhadd          v0.16b, v0.16b, v2.16b
+        urhadd          v1.16b, v1.16b, v3.16b
+        st1             {v0.16b-v1.16b}, [x0], x1
+        subs            w6, w6, #1
+        b.ne            .Lpel_bi_direct32
+        ret
+
+.Lpel_bi_direct64:
+        ld1             {v0.16b-v3.16b}, [x2], x3
+        ld1             {v4.16b-v7.16b}, [x4], x5
+        urhadd          v0.16b, v0.16b, v4.16b
+        urhadd          v1.16b, v1.16b, v5.16b
+        urhadd          v2.16b, v2.16b, v6.16b
+        urhadd          v3.16b, v3.16b, v7.16b
+        st1             {v0.16b-v3.16b}, [x0], x1
+        subs            w6, w6, #1
+        b.ne            .Lpel_bi_direct64
+        ret
+endfunc
+
 function ff_hevc_put_hevc_pel_bi_pixels6_8_neon, export=1
         mov             x10, #(HEVC_MAX_PB_SIZE * 2)
         sub             x1, x1, #4

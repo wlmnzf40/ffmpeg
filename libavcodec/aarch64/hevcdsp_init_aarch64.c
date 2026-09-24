@@ -92,6 +92,10 @@ void ff_hevc_idct_8x8_dc_10_neon(int16_t *coeffs);
 void ff_hevc_idct_16x16_dc_10_neon(int16_t *coeffs);
 void ff_hevc_idct_32x32_dc_10_neon(int16_t *coeffs);
 void ff_hevc_transform_luma_4x4_neon_8(int16_t *coeffs);
+void ff_hevc_put_hevc_pel_bi_direct_8_neon(uint8_t *dst, ptrdiff_t dststride,
+                                            const uint8_t *src0, ptrdiff_t src0stride,
+                                            const uint8_t *src1, ptrdiff_t src1stride,
+                                            int height, int width);
 
 #define NEON8_FNASSIGN(member, v, h, fn, ext) \
         member[1][v][h] = ff_hevc_put_hevc_##fn##4_8_neon##ext;  \
@@ -136,6 +140,7 @@ av_cold void ff_hevc_dsp_init_aarch64(HEVCDSPContext *c, const int bit_depth)
     if (!have_neon(cpu_flags)) return;
 
     if (bit_depth == 8) {
+        c->put_hevc_pel_bi_direct      = ff_hevc_put_hevc_pel_bi_direct_8_neon;
         c->hevc_h_loop_filter_luma     = ff_hevc_h_loop_filter_luma_8_neon;
         c->hevc_v_loop_filter_luma     = ff_hevc_v_loop_filter_luma_8_neon;
         c->hevc_h_loop_filter_chroma   = ff_hevc_h_loop_filter_chroma_8_neon;

@@ -372,6 +372,28 @@ static void FUNC(put_hevc_pel_bi_pixels)(uint8_t *_dst, ptrdiff_t _dststride, co
     }
 }
 
+static void FUNC(put_hevc_pel_bi_direct)(uint8_t *_dst, ptrdiff_t _dststride,
+                                         const uint8_t *_src0, ptrdiff_t _src0stride,
+                                         const uint8_t *_src1, ptrdiff_t _src1stride,
+                                         int height, int width)
+{
+    pixel *dst = (pixel *)_dst;
+    const pixel *src0 = (const pixel *)_src0;
+    const pixel *src1 = (const pixel *)_src1;
+    const ptrdiff_t dststride = _dststride / sizeof(pixel);
+    const ptrdiff_t src0stride = _src0stride / sizeof(pixel);
+    const ptrdiff_t src1stride = _src1stride / sizeof(pixel);
+
+    for (int y = 0; y < height; y++) {
+        for (int x = 0; x < width; x++) {
+            dst[x] = (src0[x] + src1[x] + 1) >> 1;
+        }
+        dst += dststride;
+        src0 += src0stride;
+        src1 += src1stride;
+    }
+}
+
 static void FUNC(put_hevc_pel_bi_w_pixels)(uint8_t *_dst, ptrdiff_t _dststride, const uint8_t *_src, ptrdiff_t _srcstride,
                                            const int16_t *src2,
                                            int height, int denom, int wx0, int wx1,
