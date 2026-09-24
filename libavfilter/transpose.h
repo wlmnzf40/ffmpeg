@@ -46,5 +46,6 @@ typedef struct TransVtable {
 } TransVtable;
 
 void ff_transpose_init_x86(TransVtable *v, int pixstep);
+void ff_transpose_init_aarch64(TransVtable *v, int pixelStep);
 
 #endif

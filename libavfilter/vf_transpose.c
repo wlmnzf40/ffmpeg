@@ -243,6 +243,14 @@ static int config_props_output(AVFilterLink *outlink)
     }
 #endif
 
+#if ARCH_AARCH64
+    for (int i = 0; i < 4; i++) {
+        TransVtable *v = &s->vtables[i];
+
+        ff_transpose_init_aarch64(v, s->pixsteps[i]);
+    }
+#endif
+
     av_log(ctx, AV_LOG_VERBOSE,
            "w:%d h:%d dir:%d -> w:%d h:%d rotation:%s vflip:%d\n",
            inlink->w, inlink->h, s->dir, outlink->w, outlink->h,
