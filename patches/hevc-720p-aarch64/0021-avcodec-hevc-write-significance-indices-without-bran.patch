@@ -1,0 +1,73 @@
+From 0fcb54ad4bdcaef718da33e09b196a90debc6d07 Mon Sep 17 00:00:00 2001
+From: wanglimin40 <wanglimin40@huawei.com>
+Date: Sat, 26 Sep 2026 02:25:01 +0800
+Subject: [PATCH 21/23] avcodec/hevc: write significance indices without
+ branching
+
+---
+ .../21-hevc-significance-branchless.md        | 33 +++++++++++++++++++
+ libavcodec/hevc/cabac.c                       |  8 ++---
+ 2 files changed, 37 insertions(+), 4 deletions(-)
+ create mode 100644 docs/optimizations/hevc-720p-aarch64/21-hevc-significance-branchless.md
+
+diff --git a/docs/optimizations/hevc-720p-aarch64/21-hevc-significance-branchless.md b/docs/optimizations/hevc-720p-aarch64/21-hevc-significance-branchless.md
+new file mode 100644
+index 000000000..62a2ef067
+--- /dev/null
++++ b/docs/optimizations/hevc-720p-aarch64/21-hevc-significance-branchless.md
+@@ -0,0 +1,33 @@
++# 优化点 21：HEVC 显著系数标志的无分支索引写入
++
++## 代码走读
++
++`DecodeSignificantCoeffFlagsLocal` 按扫描顺序逐个读取 CABAC 标志。
++原实现每读一个标志就分支判断是否把扫描索引写入数组；该分支位于
++CABAC 串行热循环中。现在先把索引写到当前 `count` 位置，再按标志值
++（0 或 1）增加 `count`。标志为 0 时，下次迭代会覆盖同一位置；
++标志为 1 时，该索引保留。循环的读位顺序、CABAC 状态及最终索引序列不变。
++
++只修改 GCC/AArch64 使用的显著系数 helper，不改变线程数或解码策略。
++候选先单独叠加到已提交的 patch20 源码，后续其它 CABAC 改动均未加入此对照。
++
++## 验证
++
++鲲鹏 920、静态 GCC 构建，输入
++`/data/wanglimin/HEVC-720p-10min.mov`，两版都使用：
++
++```bash
++ffmpeg -nostdin -v fatal -threads 0 \
++    -i /data/wanglimin/HEVC-720p-10min.mov \
++    -frames:v 15000 -an -sn -vf format=rgb24 -f null -
++```
++
++| 交叉顺序 | patch20 `real` | 本优化 `real` |
++|---|---:|---:|
++| patch20 → 本优化 | 30.543 s | 29.928 s |
++| 本优化 → patch20 | 30.699 s | 29.987 s |
++
++均值约下降 0.664 秒（2.17%）。3000 帧 RGB24 `framemd5` 管道
++SHA-256 与 patch20 相同：
++`9bf7a192699267ddfb6615887231209758dcdc695aa740c6ca75cb5f4709f792`。
++这仍未达到 20 秒目标，也不能外推到其他输入或编译器。
+diff --git a/libavcodec/hevc/cabac.c b/libavcodec/hevc/cabac.c
+index 336a6a5f3..12a105cf5 100644
+--- a/libavcodec/hevc/cabac.c
++++ b/libavcodec/hevc/cabac.c
+@@ -957,10 +957,10 @@ static av_noinline int DecodeSignificantCoeffFlagsLocal(
+     int cabacRange = cabac->range;
+ 
+     for (int n = nEnd; n > 0; n--) {
+-        if (get_cabac_local(cabac, &state[ctxIdxMap[n]],
+-                            &cabacLow, &cabacRange)) {
+-            significantCoeffFlagIdx[count++] = n;
+-        }
++        int significantCoeff = get_cabac_local(cabac, &state[ctxIdxMap[n]],
++                                               &cabacLow, &cabacRange);
++        significantCoeffFlagIdx[count] = n;
++        count += significantCoeff;
+     }
+     cabac->low = cabacLow;
+     cabac->range = cabacRange;
+-- 
+2.43.0
+

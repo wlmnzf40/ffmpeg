@@ -1,0 +1,77 @@
+From d1e0d66d63dc7b21c0f11912970b90977006f42a Mon Sep 17 00:00:00 2001
+From: wanglimin40 <wanglimin40@huawei.com>
+Date: Sat, 26 Sep 2026 02:33:03 +0800
+Subject: [PATCH 23/23] avcodec/hevc: clamp dequantized coefficients directly
+
+---
+ .../23-hevc-coefficient-clamp.md              | 38 +++++++++++++++++++
+ libavcodec/hevc/cabac.c                       |  8 +---
+ 2 files changed, 39 insertions(+), 7 deletions(-)
+ create mode 100644 docs/optimizations/hevc-720p-aarch64/23-hevc-coefficient-clamp.md
+
+diff --git a/docs/optimizations/hevc-720p-aarch64/23-hevc-coefficient-clamp.md b/docs/optimizations/hevc-720p-aarch64/23-hevc-coefficient-clamp.md
+new file mode 100644
+index 000000000..4b435a9f5
+--- /dev/null
++++ b/docs/optimizations/hevc-720p-aarch64/23-hevc-coefficient-clamp.md
+@@ -0,0 +1,38 @@
++# 优化点 23：HEVC 反量化系数的直接饱和裁剪
++
++## 代码走读
++
++`ff_hevc_hls_residual_coding` 计算有符号反量化系数后，需要写入 16-bit
++系数缓冲区。旧代码按正负分别判断，再用大位掩码识别越界值。
++新代码把相同语义直接写成 `[-32768, 32767]` 区间裁剪：
++
++```c
++trans_coeff_level = FFMAX(FFMIN(trans_coeff_level, 32767), -32768);
++```
++
++对于负数，旧表达式的 `~value` 超出 15 位当且仅当
++`value < -32768`；对于非负数，越界条件是 `value > 32767`。
++因此新旧结果相同。这个表达式让 GCC 对两个边界条件直接生成选择操作，
++减少热循环中的条件控制流。只修改裁剪，不改变 CABAC 位读取、线程数或输出精度。
++
++## 验证
++
++本优化单独叠加在优化点 21、22 后。两版都是鲲鹏 920 上的静态 GCC
++构建，固定原 benchmark 的 `-threads 0`：
++
++```bash
++ffmpeg -nostdin -v fatal -threads 0 \
++    -i /data/wanglimin/HEVC-720p-10min.mov \
++    -frames:v 15000 -an -sn -vf format=rgb24 -f null -
++```
++
++| 交叉顺序 | 优化点 22 后 `real` | 再加本优化 `real` |
++|---|---:|---:|
++| 对照 → 本优化 | 29.384 s | 28.691 s |
++| 本优化 → 对照 | 29.369 s | 28.674 s |
++
++均值约下降 0.694 秒（2.36%）。3000 帧 RGB24 `framemd5` 管道
++SHA-256 与对照相同：
++`9bf7a192699267ddfb6615887231209758dcdc695aa740c6ca75cb5f4709f792`。
++独立测试“符号位无分支取反”未见收益，因此没有并入本提交。
++完整 `real` 仍约 28.7 秒，尚未达到 20 秒目标。
+diff --git a/libavcodec/hevc/cabac.c b/libavcodec/hevc/cabac.c
+index ec32c475c..fece0f7e2 100644
+--- a/libavcodec/hevc/cabac.c
++++ b/libavcodec/hevc/cabac.c
+@@ -1613,13 +1613,7 @@ void ff_hevc_hls_residual_coding(HEVCLocalContext *lc, const HEVCPPS *pps,
+                         }
+                     }
+                     trans_coeff_level = (trans_coeff_level * (int64_t)scale * (int64_t)scale_m + add) >> shift;
+-                    if(trans_coeff_level < 0) {
+-                        if((~trans_coeff_level) & 0xFffffffffff8000)
+-                            trans_coeff_level = -32768;
+-                    } else {
+-                        if(trans_coeff_level & 0xffffffffffff8000)
+-                            trans_coeff_level = 32767;
+-                    }
++                    trans_coeff_level = FFMAX(FFMIN(trans_coeff_level, 32767), -32768);
+                 }
+                 coeffs[y_c * trafo_size + x_c] = trans_coeff_level;
+             }
+-- 
+2.43.0
+
