@@ -1,8 +1,8 @@
-# HEVC-720p Main10 鲲鹏 920 优化续篇（patch15～19）
+# HEVC-720p Main10 鲲鹏 920 优化续篇（patch15～20）
 
 ## 结论
 
-patch15～19 叠加在已有 BoostKit 和 patch1、2、5～14 之后，不应用线程调节
+patch15～20 叠加在已有 BoostKit 和 patch1、2、5～14 之后，不应用线程调节
 patch3，也不依赖 PGO patch4。目标输入和 15000 帧 benchmark 均未改变。
 
 | 构建与阶段 | real | user | 说明 |
@@ -13,7 +13,8 @@ patch3，也不依赖 PGO patch4。目标输入和 15000 帧 benchmark 均未改
 | patch16～17 组合区间 | 约 30.7 s | - | hscale 初始化分派与 CABAC 状态缓存 |
 | patch18，GCC 静态 FFmpeg 库 | 30.516 s | 388.966 s | 三组成对周期中位数约 -1.47% |
 | patch19，GCC 消除 RGB spill | 30.384 s | 386.119 s | 三组成对周期全部获胜 |
-| patch19，Clang 17 LTO | **29.563 s** | 378.658 s | Clang 原本已无 spill，当前最好构建 |
+| patch20，GCC 隔离 CABAC 循环 | 平均 30.381 s | - | 指令约 -0.65%，周期中位数约 -0.53% |
+| patch20，Clang 17 LTO | **29.563 s** | 378.658 s | GCC 专用点不改变 Clang，当前最好构建 |
 
 相对 43.327 s，当前代表值降低约 31.8%，吞吐约 1.47×。尚未达到约 20 s / 2×，
 因此不作 2×声明。纯解码、CABAC 串行段和插值仍是主要下限；在不增加线程的
@@ -55,6 +56,7 @@ git am patches/hevc-720p-aarch64/0016-*.patch
 git am patches/hevc-720p-aarch64/0017-*.patch
 git am patches/hevc-720p-aarch64/0018-*.patch
 git am patches/hevc-720p-aarch64/0019-*.patch
+git am patches/hevc-720p-aarch64/0020-*.patch
 ```
 
 如从未打补丁的 FFmpeg 7.1.1 开始，先按旧报告依次应用 BoostKit、patch1、2、
