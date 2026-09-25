@@ -1,0 +1,192 @@
+From f6d90b6d1748c96d3588470f1950c0887c7d6228 Mon Sep 17 00:00:00 2001
+From: wanglimin40 <wanglimin40@huawei.com>
+Date: Fri, 25 Sep 2026 13:40:16 +0800
+Subject: [PATCH] swscale/aarch64: vectorize exact RGB24 table arithmetic
+
+---
+ libswscale/aarch64/output_rgb_neon.c | 121 ++++++++++++++++++++-------
+ libswscale/swscale_internal.h        |   6 ++
+ libswscale/yuv2rgb.c                 |   8 ++
+ 3 files changed, 103 insertions(+), 32 deletions(-)
+
+diff --git a/libswscale/aarch64/output_rgb_neon.c b/libswscale/aarch64/output_rgb_neon.c
+index d3a44833c..28c739e7f 100644
+--- a/libswscale/aarch64/output_rgb_neon.c
++++ b/libswscale/aarch64/output_rgb_neon.c
+@@ -75,6 +75,48 @@ static av_always_inline int16x8_t filter_vertical_4_8(const int16_t **src,
+                         vmovn_s32(vshrq_n_s32(high, 19)));
+ }
+ 
++static av_always_inline void ComputeChromaOffset(int16x8_t samples,
++                                                  int32_t coeff,
++                                                  int32x4_t *low,
++                                                  int32x4_t *high)
++{
++    const int16x8_t clipped = vmaxq_s16(vdupq_n_s16(0),
++                                        vminq_s16(samples,
++                                                  vdupq_n_s16(255)));
++    const int32x4_t bias = vdupq_n_s32(coeff >> 9);
++
++    *low = vsubq_s32(vshrq_n_s32(vmulq_n_s32(vmovl_s16(
++                                                 vget_low_s16(clipped)),
++                                             coeff),
++                                 16),
++                     bias);
++    *high = vsubq_s32(vshrq_n_s32(vmulq_n_s32(vmovl_high_s16(clipped),
++                                              coeff),
++                                  16),
++                      bias);
++}
++
++static av_always_inline uint8x16_t ConvertChannel(
++    int32x4_t yBase0, int32x4_t yBase1,
++    int32x4_t yBase2, int32x4_t yBase3,
++    int32x4_t chromaLow, int32x4_t chromaHigh, int32_t yCoeff)
++{
++    const int32x4_t scaledLow = vmulq_n_s32(chromaLow, yCoeff);
++    const int32x4_t scaledHigh = vmulq_n_s32(chromaHigh, yCoeff);
++    const int16x8_t low = vcombine_s16(
++        vshrn_n_s32(vaddq_s32(yBase0,
++                              vzip1q_s32(scaledLow, scaledLow)), 16),
++        vshrn_n_s32(vaddq_s32(yBase1,
++                              vzip2q_s32(scaledLow, scaledLow)), 16));
++    const int16x8_t high = vcombine_s16(
++        vshrn_n_s32(vaddq_s32(yBase2,
++                              vzip1q_s32(scaledHigh, scaledHigh)), 16),
++        vshrn_n_s32(vaddq_s32(yBase3,
++                              vzip2q_s32(scaledHigh, scaledHigh)), 16));
++
++    return vcombine_u8(vqmovun_s16(low), vqmovun_s16(high));
++}
++
+ void ff_yuv2rgb24_X_neon(SwsContext *c, const int16_t *lumFilter,
+                          const int16_t **lumSrc, int lumFilterSize,
+                          const int16_t *chrFilter,
+@@ -83,41 +125,56 @@ void ff_yuv2rgb24_X_neon(SwsContext *c, const int16_t *lumFilter,
+                          const int16_t **alpSrc, uint8_t *dest,
+                          int dstW, int y)
+ {
+-    DECLARE_ALIGNED(16, int16_t, luma)[16];
+-    DECLARE_ALIGNED(16, int16_t, chromaU)[8];
+-    DECLARE_ALIGNED(16, int16_t, chromaV)[8];
++    const int32_t yCoeff = c->rgbTableYCoeff;
++    const int32x4_t tableBase = vdupq_n_s32(c->rgbTableBase);
+ 
+     av_assert2(lumFilterSize == 2);
+     av_assert2(chrFilterSize == 4);
+     for (int x = 0; x < dstW; x += 16) {
+-        vst1q_s16(luma, filter_vertical_2_8(lumSrc[0] + x,
+-                                            lumSrc[1] + x,
+-                                            lumFilter[0], lumFilter[1]));
+-        vst1q_s16(luma + 8, filter_vertical_2_8(lumSrc[0] + x + 8,
+-                                                lumSrc[1] + x + 8,
+-                                                lumFilter[0], lumFilter[1]));
+-        vst1q_s16(chromaU,
+-                  filter_vertical_4_8(chrUSrc, x >> 1, chrFilter));
+-        vst1q_s16(chromaV,
+-                  filter_vertical_4_8(chrVSrc, x >> 1, chrFilter));
+-
+-        for (int pair = 0; pair < 8; pair++) {
+-            const int y0 = luma[pair * 2];
+-            const int y1 = luma[pair * 2 + 1];
+-            const int u = chromaU[pair];
+-            const int v = chromaV[pair];
+-            const uint8_t *red = c->table_rV[v + YUVRGB_TABLE_HEADROOM];
+-            const uint8_t *green = c->table_gU[u + YUVRGB_TABLE_HEADROOM] +
+-                                   c->table_gV[v + YUVRGB_TABLE_HEADROOM];
+-            const uint8_t *blue = c->table_bU[u + YUVRGB_TABLE_HEADROOM];
+-            uint8_t *rgb = dest + x * 3 + pair * 6;
+-
+-            rgb[0] = red[y0];
+-            rgb[1] = green[y0];
+-            rgb[2] = blue[y0];
+-            rgb[3] = red[y1];
+-            rgb[4] = green[y1];
+-            rgb[5] = blue[y1];
+-        }
++        const int16x8_t lumaLow = filter_vertical_2_8(
++            lumSrc[0] + x, lumSrc[1] + x, lumFilter[0], lumFilter[1]);
++        const int16x8_t lumaHigh = filter_vertical_2_8(
++            lumSrc[0] + x + 8, lumSrc[1] + x + 8,
++            lumFilter[0], lumFilter[1]);
++        const int16x8_t chromaU = filter_vertical_4_8(chrUSrc, x >> 1,
++                                                       chrFilter);
++        const int16x8_t chromaV = filter_vertical_4_8(chrVSrc, x >> 1,
++                                                       chrFilter);
++        int32x4_t redLow;
++        int32x4_t redHigh;
++        int32x4_t blueLow;
++        int32x4_t blueHigh;
++        int32x4_t greenULow;
++        int32x4_t greenUHigh;
++        int32x4_t greenVLow;
++        int32x4_t greenVHigh;
++        int32x4_t yBase0 = vmlaq_n_s32(tableBase,
++                                       vmovl_s16(vget_low_s16(lumaLow)),
++                                       yCoeff);
++        int32x4_t yBase1 = vmlaq_n_s32(tableBase,
++                                       vmovl_high_s16(lumaLow), yCoeff);
++        int32x4_t yBase2 = vmlaq_n_s32(tableBase,
++                                       vmovl_s16(vget_low_s16(lumaHigh)),
++                                       yCoeff);
++        int32x4_t yBase3 = vmlaq_n_s32(tableBase,
++                                       vmovl_high_s16(lumaHigh), yCoeff);
++        uint8x16x3_t rgb;
++
++        ComputeChromaOffset(chromaV, c->rgbTableCrv, &redLow, &redHigh);
++        ComputeChromaOffset(chromaU, c->rgbTableCbu, &blueLow, &blueHigh);
++        ComputeChromaOffset(chromaU, c->rgbTableCgu,
++                            &greenULow, &greenUHigh);
++        ComputeChromaOffset(chromaV, c->rgbTableCgv,
++                            &greenVLow, &greenVHigh);
++
++        rgb.val[0] = ConvertChannel(yBase0, yBase1, yBase2, yBase3,
++                                    redLow, redHigh, yCoeff);
++        rgb.val[1] = ConvertChannel(yBase0, yBase1, yBase2, yBase3,
++                                    vaddq_s32(greenULow, greenVLow),
++                                    vaddq_s32(greenUHigh, greenVHigh),
++                                    yCoeff);
++        rgb.val[2] = ConvertChannel(yBase0, yBase1, yBase2, yBase3,
++                                    blueLow, blueHigh, yCoeff);
++        vst3q_u8(dest + x * 3, rgb);
+     }
+ }
+diff --git a/libswscale/swscale_internal.h b/libswscale/swscale_internal.h
+index 2c0a86720..87af0a995 100644
+--- a/libswscale/swscale_internal.h
++++ b/libswscale/swscale_internal.h
+@@ -436,6 +436,12 @@ typedef struct SwsContext {
+     uint8_t *table_rV[256 + 2*YUVRGB_TABLE_HEADROOM];
+     uint8_t *table_gU[256 + 2*YUVRGB_TABLE_HEADROOM];
+     uint8_t *table_bU[256 + 2*YUVRGB_TABLE_HEADROOM];
++    int32_t rgbTableYCoeff;
++    int32_t rgbTableBase;
++    int32_t rgbTableCrv;
++    int32_t rgbTableCbu;
++    int32_t rgbTableCgu;
++    int32_t rgbTableCgv;
+     DECLARE_ALIGNED(16, int32_t, input_rgb2yuv_table)[16+40*4]; // This table can contain both C and SIMD formatted values, the C vales are always at the XY_IDX points
+ #define RY_IDX 0
+ #define GY_IDX 1
+diff --git a/libswscale/yuv2rgb.c b/libswscale/yuv2rgb.c
+index 52fe2093e..e2776fe1b 100644
+--- a/libswscale/yuv2rgb.c
++++ b/libswscale/yuv2rgb.c
+@@ -784,6 +784,14 @@ av_cold int ff_yuv2rgb_c_init_tables(SwsContext *c, const int inv_table[4],
+     cgu = ((cgu * (1 << 16)) + 0x8000) / FFMAX(cy, 1);
+     cgv = ((cgv * (1 << 16)) + 0x8000) / FFMAX(cy, 1);
+ 
++    c->rgbTableYCoeff = cy;
++    c->rgbTableBase = -(384 << 16) - YUVRGB_TABLE_LUMA_HEADROOM * cy - oy +
++                      yoffs * cy + 0x8000;
++    c->rgbTableCrv = crv;
++    c->rgbTableCbu = cbu;
++    c->rgbTableCgu = cgu;
++    c->rgbTableCgv = cgv;
++
+     av_freep(&c->yuvTable);
+ 
+ #define ALLOC_YUV_TABLE(x)          \
+-- 
+2.43.0
+
