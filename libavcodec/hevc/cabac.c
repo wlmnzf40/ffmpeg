@@ -939,11 +939,10 @@ static av_always_inline int significant_coeff_group_flag_decode(HEVCLocalContext
 }
 #ifndef get_cabac_local
 static av_always_inline int significant_coeff_flag_decode(HEVCLocalContext *lc,
-                                                          int x_c, int y_c,
-                                                          int offset,
+                                                          int n, int offset,
                                                           const uint8_t *ctx_idx_map)
 {
-    int inc = ctx_idx_map[(y_c << 2) + x_c] + offset;
+    int inc = ctx_idx_map[n] + offset;
     return GET_CABAC(SIGNIFICANT_COEFF_FLAG_OFFSET + inc);
 }
 #endif
@@ -1255,12 +1254,28 @@ void ff_hevc_hls_residual_coding(HEVCLocalContext *lc, const HEVCPPS *pps,
             prev_sig += (!!significant_coeff_group_flag[x_cg][y_cg + 1] << 1);
 
         if (significant_coeff_group_flag[x_cg][y_cg] && n_end >= 0) {
-            static const uint8_t ctx_idx_map[] = {
-                0, 1, 4, 5, 2, 3, 4, 5, 6, 6, 8, 8, 7, 7, 8, 8,
-                1, 1, 1, 0, 1, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0,
-                2, 2, 2, 2, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0,
-                2, 1, 0, 0, 2, 1, 0, 0, 2, 1, 0, 0, 2, 1, 0, 0,
-                2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2,
+            static const uint8_t ctx_idx_map[3][5 * 16] = {
+                {
+                    0, 2, 1, 6, 3, 4, 7, 6, 4, 5, 7, 8, 5, 8, 8, 8,
+                    1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                    2, 1, 2, 0, 1, 2, 0, 0, 1, 2, 0, 0, 1, 0, 0, 0,
+                    2, 2, 1, 2, 1, 0, 2, 1, 0, 0, 1, 0, 0, 0, 0, 0,
+                    2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2,
+                },
+                {
+                    0, 1, 4, 5, 2, 3, 4, 5, 6, 6, 8, 8, 7, 7, 8, 8,
+                    1, 1, 1, 0, 1, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0,
+                    2, 2, 2, 2, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0,
+                    2, 1, 0, 0, 2, 1, 0, 0, 2, 1, 0, 0, 2, 1, 0, 0,
+                    2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2,
+                },
+                {
+                    0, 2, 6, 7, 1, 3, 6, 7, 4, 4, 8, 8, 5, 5, 8, 8,
+                    1, 1, 1, 0, 1, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0,
+                    2, 1, 0, 0, 2, 1, 0, 0, 2, 1, 0, 0, 2, 1, 0, 0,
+                    2, 2, 2, 2, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0,
+                    2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2,
+                },
             };
             const uint8_t *ctx_idx_map_p;
             int scf_offset = 0;
@@ -1270,7 +1285,7 @@ void ff_hevc_hls_residual_coding(HEVCLocalContext *lc, const HEVCPPS *pps,
 #endif
             if (sps->transform_skip_context_enabled &&
                 (transform_skip_flag || lc->cu.cu_transquant_bypass_flag)) {
-                ctx_idx_map_p = &ctx_idx_map[4 * 16];
+                ctx_idx_map_p = &ctx_idx_map[scan_idx][4 * 16];
                 if (c_idx == 0) {
                     scf_offset = 40;
                 } else {
@@ -1280,9 +1295,9 @@ void ff_hevc_hls_residual_coding(HEVCLocalContext *lc, const HEVCPPS *pps,
                 if (c_idx != 0)
                     scf_offset = 27;
                 if (log2_trafo_size == 2) {
-                    ctx_idx_map_p = &ctx_idx_map[0];
+                    ctx_idx_map_p = &ctx_idx_map[scan_idx][0];
                 } else {
-                    ctx_idx_map_p = &ctx_idx_map[(prev_sig + 1) << 4];
+                    ctx_idx_map_p = &ctx_idx_map[scan_idx][(prev_sig + 1) << 4];
                     if (c_idx == 0) {
                         if ((x_cg > 0 || y_cg > 0))
                             scf_offset += 3;
@@ -1312,7 +1327,7 @@ void ff_hevc_hls_residual_coding(HEVCLocalContext *lc, const HEVCPPS *pps,
                 x_c = scan_x_off[n];
                 y_c = scan_y_off[n];
 #ifdef get_cabac_local
-                inc = ctx_idx_map_p[(y_c << 2) + x_c] + scf_offset;
+                inc = ctx_idx_map_p[n] + scf_offset;
 
                 significantCoeff = get_cabac_local(
                     &lc->cc,
@@ -1320,7 +1335,7 @@ void ff_hevc_hls_residual_coding(HEVCLocalContext *lc, const HEVCPPS *pps,
                     &cabacLow, &cabacRange);
 #else
                 significantCoeff = significant_coeff_flag_decode(
-                    lc, x_c, y_c, scf_offset, ctx_idx_map_p);
+                    lc, n, scf_offset, ctx_idx_map_p);
 #endif
                 if (significantCoeff) {
                     significant_coeff_flag_idx[nb_significant_coeff_flag] = n;
