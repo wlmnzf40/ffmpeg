@@ -75,6 +75,48 @@ static av_always_inline int16x8_t filter_vertical_4_8(const int16_t **src,
                         vmovn_s32(vshrq_n_s32(high, 19)));
 }
 
+static av_always_inline void ComputeChromaOffset(int16x8_t samples,
+                                                  int32_t coeff,
+                                                  int32x4_t *low,
+                                                  int32x4_t *high)
+{
+    const int16x8_t clipped = vmaxq_s16(vdupq_n_s16(0),
+                                        vminq_s16(samples,
+                                                  vdupq_n_s16(255)));
+    const int32x4_t bias = vdupq_n_s32(coeff >> 9);
+
+    *low = vsubq_s32(vshrq_n_s32(vmulq_n_s32(vmovl_s16(
+                                                 vget_low_s16(clipped)),
+                                             coeff),
+                                 16),
+                     bias);
+    *high = vsubq_s32(vshrq_n_s32(vmulq_n_s32(vmovl_high_s16(clipped),
+                                              coeff),
+                                  16),
+                      bias);
+}
+
+static av_always_inline uint8x16_t ConvertChannel(
+    int32x4_t yBase0, int32x4_t yBase1,
+    int32x4_t yBase2, int32x4_t yBase3,
+    int32x4_t chromaLow, int32x4_t chromaHigh, int32_t yCoeff)
+{
+    const int32x4_t scaledLow = vmulq_n_s32(chromaLow, yCoeff);
+    const int32x4_t scaledHigh = vmulq_n_s32(chromaHigh, yCoeff);
+    const int16x8_t low = vcombine_s16(
+        vshrn_n_s32(vaddq_s32(yBase0,
+                              vzip1q_s32(scaledLow, scaledLow)), 16),
+        vshrn_n_s32(vaddq_s32(yBase1,
+                              vzip2q_s32(scaledLow, scaledLow)), 16));
+    const int16x8_t high = vcombine_s16(
+        vshrn_n_s32(vaddq_s32(yBase2,
+                              vzip1q_s32(scaledHigh, scaledHigh)), 16),
+        vshrn_n_s32(vaddq_s32(yBase3,
+                              vzip2q_s32(scaledHigh, scaledHigh)), 16));
+
+    return vcombine_u8(vqmovun_s16(low), vqmovun_s16(high));
+}
+
 void ff_yuv2rgb24_X_neon(SwsContext *c, const int16_t *lumFilter,
                          const int16_t **lumSrc, int lumFilterSize,
                          const int16_t *chrFilter,
@@ -83,41 +125,56 @@ void ff_yuv2rgb24_X_neon(SwsContext *c, const int16_t *lumFilter,
                          const int16_t **alpSrc, uint8_t *dest,
                          int dstW, int y)
 {
-    DECLARE_ALIGNED(16, int16_t, luma)[16];
-    DECLARE_ALIGNED(16, int16_t, chromaU)[8];
-    DECLARE_ALIGNED(16, int16_t, chromaV)[8];
+    const int32_t yCoeff = c->rgbTableYCoeff;
+    const int32x4_t tableBase = vdupq_n_s32(c->rgbTableBase);
 
     av_assert2(lumFilterSize == 2);
     av_assert2(chrFilterSize == 4);
     for (int x = 0; x < dstW; x += 16) {
-        vst1q_s16(luma, filter_vertical_2_8(lumSrc[0] + x,
-                                            lumSrc[1] + x,
-                                            lumFilter[0], lumFilter[1]));
-        vst1q_s16(luma + 8, filter_vertical_2_8(lumSrc[0] + x + 8,
-                                                lumSrc[1] + x + 8,
-                                                lumFilter[0], lumFilter[1]));
-        vst1q_s16(chromaU,
-                  filter_vertical_4_8(chrUSrc, x >> 1, chrFilter));
-        vst1q_s16(chromaV,
-                  filter_vertical_4_8(chrVSrc, x >> 1, chrFilter));
+        const int16x8_t lumaLow = filter_vertical_2_8(
+            lumSrc[0] + x, lumSrc[1] + x, lumFilter[0], lumFilter[1]);
+        const int16x8_t lumaHigh = filter_vertical_2_8(
+            lumSrc[0] + x + 8, lumSrc[1] + x + 8,
+            lumFilter[0], lumFilter[1]);
+        const int16x8_t chromaU = filter_vertical_4_8(chrUSrc, x >> 1,
+                                                       chrFilter);
+        const int16x8_t chromaV = filter_vertical_4_8(chrVSrc, x >> 1,
+                                                       chrFilter);
+        int32x4_t redLow;
+        int32x4_t redHigh;
+        int32x4_t blueLow;
+        int32x4_t blueHigh;
+        int32x4_t greenULow;
+        int32x4_t greenUHigh;
+        int32x4_t greenVLow;
+        int32x4_t greenVHigh;
+        int32x4_t yBase0 = vmlaq_n_s32(tableBase,
+                                       vmovl_s16(vget_low_s16(lumaLow)),
+                                       yCoeff);
+        int32x4_t yBase1 = vmlaq_n_s32(tableBase,
+                                       vmovl_high_s16(lumaLow), yCoeff);
+        int32x4_t yBase2 = vmlaq_n_s32(tableBase,
+                                       vmovl_s16(vget_low_s16(lumaHigh)),
+                                       yCoeff);
+        int32x4_t yBase3 = vmlaq_n_s32(tableBase,
+                                       vmovl_high_s16(lumaHigh), yCoeff);
+        uint8x16x3_t rgb;
 
-        for (int pair = 0; pair < 8; pair++) {
-            const int y0 = luma[pair * 2];
-            const int y1 = luma[pair * 2 + 1];
-            const int u = chromaU[pair];
-            const int v = chromaV[pair];
-            const uint8_t *red = c->table_rV[v + YUVRGB_TABLE_HEADROOM];
-            const uint8_t *green = c->table_gU[u + YUVRGB_TABLE_HEADROOM] +
-                                   c->table_gV[v + YUVRGB_TABLE_HEADROOM];
-            const uint8_t *blue = c->table_bU[u + YUVRGB_TABLE_HEADROOM];
-            uint8_t *rgb = dest + x * 3 + pair * 6;
+        ComputeChromaOffset(chromaV, c->rgbTableCrv, &redLow, &redHigh);
+        ComputeChromaOffset(chromaU, c->rgbTableCbu, &blueLow, &blueHigh);
+        ComputeChromaOffset(chromaU, c->rgbTableCgu,
+                            &greenULow, &greenUHigh);
+        ComputeChromaOffset(chromaV, c->rgbTableCgv,
+                            &greenVLow, &greenVHigh);
 
-            rgb[0] = red[y0];
-            rgb[1] = green[y0];
-            rgb[2] = blue[y0];
-            rgb[3] = red[y1];
-            rgb[4] = green[y1];
-            rgb[5] = blue[y1];
-        }
+        rgb.val[0] = ConvertChannel(yBase0, yBase1, yBase2, yBase3,
+                                    redLow, redHigh, yCoeff);
+        rgb.val[1] = ConvertChannel(yBase0, yBase1, yBase2, yBase3,
+                                    vaddq_s32(greenULow, greenVLow),
+                                    vaddq_s32(greenUHigh, greenVHigh),
+                                    yCoeff);
+        rgb.val[2] = ConvertChannel(yBase0, yBase1, yBase2, yBase3,
+                                    blueLow, blueHigh, yCoeff);
+        vst3q_u8(dest + x * 3, rgb);
     }
 }

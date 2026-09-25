@@ -436,6 +436,12 @@ typedef struct SwsContext {
     uint8_t *table_rV[256 + 2*YUVRGB_TABLE_HEADROOM];
     uint8_t *table_gU[256 + 2*YUVRGB_TABLE_HEADROOM];
     uint8_t *table_bU[256 + 2*YUVRGB_TABLE_HEADROOM];
+    int32_t rgbTableYCoeff;
+    int32_t rgbTableBase;
+    int32_t rgbTableCrv;
+    int32_t rgbTableCbu;
+    int32_t rgbTableCgu;
+    int32_t rgbTableCgv;
     DECLARE_ALIGNED(16, int32_t, input_rgb2yuv_table)[16+40*4]; // This table can contain both C and SIMD formatted values, the C vales are always at the XY_IDX points
 #define RY_IDX 0
 #define GY_IDX 1

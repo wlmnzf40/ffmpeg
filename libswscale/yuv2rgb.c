@@ -784,6 +784,14 @@ av_cold int ff_yuv2rgb_c_init_tables(SwsContext *c, const int inv_table[4],
     cgu = ((cgu * (1 << 16)) + 0x8000) / FFMAX(cy, 1);
     cgv = ((cgv * (1 << 16)) + 0x8000) / FFMAX(cy, 1);
 
+    c->rgbTableYCoeff = cy;
+    c->rgbTableBase = -(384 << 16) - YUVRGB_TABLE_LUMA_HEADROOM * cy - oy +
+                      yoffs * cy + 0x8000;
+    c->rgbTableCrv = crv;
+    c->rgbTableCbu = cbu;
+    c->rgbTableCgu = cgu;
+    c->rgbTableCgv = cgv;
+
     av_freep(&c->yuvTable);
 
 #define ALLOC_YUV_TABLE(x)          \
