@@ -869,6 +869,10 @@ static av_always_inline void last_significant_coeff_xy_prefix_decode(HEVCLocalCo
     int i = 0;
     int max = (log2_size << 1) - 1;
     int ctx_offset, ctx_shift;
+#ifdef get_cabac_local
+    int cabacLow;
+    int cabacRange;
+#endif
 
     if (!c_idx) {
         ctx_offset = 3 * (log2_size - 2)  + ((log2_size - 1) >> 2);
@@ -877,15 +881,39 @@ static av_always_inline void last_significant_coeff_xy_prefix_decode(HEVCLocalCo
         ctx_offset = 15;
         ctx_shift = log2_size - 2;
     }
+#ifdef get_cabac_local
+    cabacLow = lc->cc.low;
+    cabacRange = lc->cc.range;
+    while (i < max && get_cabac_local(
+               &lc->cc,
+               &lc->cabac_state[LAST_SIGNIFICANT_COEFF_X_PREFIX_OFFSET +
+                                (i >> ctx_shift) + ctx_offset],
+               &cabacLow, &cabacRange)) {
+        i++;
+    }
+#else
     while (i < max &&
            GET_CABAC(LAST_SIGNIFICANT_COEFF_X_PREFIX_OFFSET + (i >> ctx_shift) + ctx_offset))
         i++;
+#endif
     *last_scx_prefix = i;
 
     i = 0;
+#ifdef get_cabac_local
+    while (i < max && get_cabac_local(
+               &lc->cc,
+               &lc->cabac_state[LAST_SIGNIFICANT_COEFF_Y_PREFIX_OFFSET +
+                                (i >> ctx_shift) + ctx_offset],
+               &cabacLow, &cabacRange)) {
+        i++;
+    }
+    lc->cc.low = cabacLow;
+    lc->cc.range = cabacRange;
+#else
     while (i < max &&
            GET_CABAC(LAST_SIGNIFICANT_COEFF_Y_PREFIX_OFFSET + (i >> ctx_shift) + ctx_offset))
         i++;
+#endif
     *last_scy_prefix = i;
 }
 
@@ -909,12 +937,16 @@ static av_always_inline int significant_coeff_group_flag_decode(HEVCLocalContext
 
     return GET_CABAC(SIGNIFICANT_COEFF_GROUP_FLAG_OFFSET + inc);
 }
-static av_always_inline int significant_coeff_flag_decode(HEVCLocalContext *lc, int x_c, int y_c,
-                                           int offset, const uint8_t *ctx_idx_map)
+#ifndef get_cabac_local
+static av_always_inline int significant_coeff_flag_decode(HEVCLocalContext *lc,
+                                                          int x_c, int y_c,
+                                                          int offset,
+                                                          const uint8_t *ctx_idx_map)
 {
     int inc = ctx_idx_map[(y_c << 2) + x_c] + offset;
     return GET_CABAC(SIGNIFICANT_COEFF_FLAG_OFFSET + inc);
 }
+#endif
 
 static av_always_inline int significant_coeff_flag_decode_0(HEVCLocalContext *lc, int c_idx, int offset)
 {
@@ -1224,14 +1256,18 @@ void ff_hevc_hls_residual_coding(HEVCLocalContext *lc, const HEVCPPS *pps,
 
         if (significant_coeff_group_flag[x_cg][y_cg] && n_end >= 0) {
             static const uint8_t ctx_idx_map[] = {
-                0, 1, 4, 5, 2, 3, 4, 5, 6, 6, 8, 8, 7, 7, 8, 8, // log2_trafo_size == 2
-                1, 1, 1, 0, 1, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, // prev_sig == 0
-                2, 2, 2, 2, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, // prev_sig == 1
-                2, 1, 0, 0, 2, 1, 0, 0, 2, 1, 0, 0, 2, 1, 0, 0, // prev_sig == 2
-                2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2  // default
+                0, 1, 4, 5, 2, 3, 4, 5, 6, 6, 8, 8, 7, 7, 8, 8,
+                1, 1, 1, 0, 1, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0,
+                2, 2, 2, 2, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0,
+                2, 1, 0, 0, 2, 1, 0, 0, 2, 1, 0, 0, 2, 1, 0, 0,
+                2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2,
             };
             const uint8_t *ctx_idx_map_p;
             int scf_offset = 0;
+#ifdef get_cabac_local
+            int cabacLow;
+            int cabacRange;
+#endif
             if (sps->transform_skip_context_enabled &&
                 (transform_skip_flag || lc->cu.cu_transquant_bypass_flag)) {
                 ctx_idx_map_p = &ctx_idx_map[4 * 16];
@@ -1263,15 +1299,39 @@ void ff_hevc_hls_residual_coding(HEVCLocalContext *lc, const HEVCPPS *pps,
                     }
                 }
             }
+#ifdef get_cabac_local
+            cabacLow = lc->cc.low;
+            cabacRange = lc->cc.range;
+#endif
             for (n = n_end; n > 0; n--) {
+                int significantCoeff;
+#ifdef get_cabac_local
+                int inc;
+#endif
+
                 x_c = scan_x_off[n];
                 y_c = scan_y_off[n];
-                if (significant_coeff_flag_decode(lc, x_c, y_c, scf_offset, ctx_idx_map_p)) {
+#ifdef get_cabac_local
+                inc = ctx_idx_map_p[(y_c << 2) + x_c] + scf_offset;
+
+                significantCoeff = get_cabac_local(
+                    &lc->cc,
+                    &lc->cabac_state[SIGNIFICANT_COEFF_FLAG_OFFSET + inc],
+                    &cabacLow, &cabacRange);
+#else
+                significantCoeff = significant_coeff_flag_decode(
+                    lc, x_c, y_c, scf_offset, ctx_idx_map_p);
+#endif
+                if (significantCoeff) {
                     significant_coeff_flag_idx[nb_significant_coeff_flag] = n;
                     nb_significant_coeff_flag++;
                     implicit_non_zero_coeff = 0;
                 }
             }
+#ifdef get_cabac_local
+            lc->cc.low = cabacLow;
+            lc->cc.range = cabacRange;
+#endif
             if (implicit_non_zero_coeff == 0) {
                 if (sps->transform_skip_context_enabled &&
                     (transform_skip_flag || lc->cu.cu_transquant_bypass_flag)) {

@@ -27,10 +27,15 @@
 #include "libavcodec/cabac.h"
 
 #define get_cabac_inline get_cabac_inline_aarch64
-static av_always_inline int get_cabac_inline_aarch64(CABACContext *c,
-                                                     uint8_t *const state)
+#define get_cabac_local get_cabac_local_aarch64
+static av_always_inline int get_cabac_local_aarch64(CABACContext *c,
+                                                    uint8_t *const state,
+                                                    int *const lowValue,
+                                                    int *const rangeValue)
 {
     int bit;
+    int low = *lowValue;
+    int range = *rangeValue;
     void *reg_a, *reg_b, *reg_c, *tmp;
 
     __asm__ volatile(
@@ -80,14 +85,14 @@ static av_always_inline int get_cabac_inline_aarch64(CABACContext *c,
         "add        %w[low]       , %w[low]     , %w[tmp]       \n\t"
         "2:                                                     \n\t"
         :    [bit]"=&r"(bit),
-             [low]"+&r"(c->low),
-           [range]"+&r"(c->range),
+             [low]"+&r"(low),
+           [range]"+&r"(range),
              [r_a]"=&r"(reg_a),
              [r_b]"=&r"(reg_b),
              [r_c]"=&r"(reg_c),
              [tmp]"=&r"(tmp)
         :        [c]"r"(c),
-             [state]"r"(state),
+            [state]"r"(state),
             [tables]"r"(ff_h264_cabac_tables),
               [byte]"i"(offsetof(CABACContext, bytestream)),
                [end]"i"(offsetof(CABACContext, bytestream_end)),
@@ -97,7 +102,15 @@ static av_always_inline int get_cabac_inline_aarch64(CABACContext *c,
         : "memory", "cc"
         );
 
+    *lowValue = low;
+    *rangeValue = range;
     return bit & 1;
+}
+
+static av_always_inline int get_cabac_inline_aarch64(CABACContext *c,
+                                                     uint8_t *const state)
+{
+    return get_cabac_local_aarch64(c, state, &c->low, &c->range);
 }
 
 #endif /* HAVE_INLINE_ASM */
