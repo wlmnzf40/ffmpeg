@@ -1613,13 +1613,7 @@ void ff_hevc_hls_residual_coding(HEVCLocalContext *lc, const HEVCPPS *pps,
                         }
                     }
                     trans_coeff_level = (trans_coeff_level * (int64_t)scale * (int64_t)scale_m + add) >> shift;
-                    if(trans_coeff_level < 0) {
-                        if((~trans_coeff_level) & 0xFffffffffff8000)
-                            trans_coeff_level = -32768;
-                    } else {
-                        if(trans_coeff_level & 0xffffffffffff8000)
-                            trans_coeff_level = 32767;
-                    }
+                    trans_coeff_level = FFMAX(FFMIN(trans_coeff_level, 32767), -32768);
                 }
                 coeffs[y_c * trafo_size + x_c] = trans_coeff_level;
             }
