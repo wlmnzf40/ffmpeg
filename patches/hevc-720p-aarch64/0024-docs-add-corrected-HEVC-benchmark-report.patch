@@ -1,0 +1,192 @@
+diff --git a/docs/optimizations/hevc-720p-aarch64/21-hevc-significance-branchless.md b/docs/optimizations/hevc-720p-aarch64/21-hevc-significance-branchless.md
+index 62a2ef067..d2f6ab870 100644
+--- a/docs/optimizations/hevc-720p-aarch64/21-hevc-significance-branchless.md
++++ b/docs/optimizations/hevc-720p-aarch64/21-hevc-significance-branchless.md
+@@ -13,21 +13,24 @@ CABAC 串行热循环中。现在先把索引写到当前 `count` 位置，再
+ 
+ ## 验证
+ 
+-鲲鹏 920、静态 GCC 构建，输入
+-`/data/wanglimin/HEVC-720p-10min.mov`，两版都使用：
++2026-09-26 从 patch20 与本补丁对应的 Git 提交重新导出干净源码，
++在鲲鹏 920 上以相同 GCC 静态配置构建。输入为
++`/data/wanglimin/HEVC-720p-10min.mov`；为排除仓库早期自动线程
++补丁的影响，两版均固定 16 个解码线程（进程均为 52 个线程）：
+ 
+ ```bash
+-ffmpeg -nostdin -v fatal -threads 0 \
++ffmpeg -nostdin -v fatal -threads 16 \
+     -i /data/wanglimin/HEVC-720p-10min.mov \
+     -frames:v 15000 -an -sn -vf format=rgb24 -f null -
+ ```
+ 
+ | 交叉顺序 | patch20 `real` | 本优化 `real` |
+ |---|---:|---:|
+-| patch20 → 本优化 | 30.543 s | 29.928 s |
+-| 本优化 → patch20 | 30.699 s | 29.987 s |
++| patch20 → 本优化 | 30.333 s | 29.684 s |
++| 本优化 → patch20 | 30.794 s | 29.996 s |
+ 
+-均值约下降 0.664 秒（2.17%）。3000 帧 RGB24 `framemd5` 管道
++均值约下降 0.724 秒（2.37%）。原报告的 `-threads 0` 数字来自
++混有未提交试验代码的构建，已由以上干净构建结果取代。3000 帧 RGB24 `framemd5` 管道
+ SHA-256 与 patch20 相同：
+ `9bf7a192699267ddfb6615887231209758dcdc695aa740c6ca75cb5f4709f792`。
+ 这仍未达到 20 秒目标，也不能外推到其他输入或编译器。
+diff --git a/docs/optimizations/hevc-720p-aarch64/22-hevc-cabac-bypass-batching.md b/docs/optimizations/hevc-720p-aarch64/22-hevc-cabac-bypass-batching.md
+index 0cf002e8b..95fabb98c 100644
+--- a/docs/optimizations/hevc-720p-aarch64/22-hevc-cabac-bypass-batching.md
++++ b/docs/optimizations/hevc-720p-aarch64/22-hevc-cabac-bypass-batching.md
+@@ -16,21 +16,30 @@
+ 
+ ## 验证
+ 
+-本优化单独叠加在优化点 21 之后，两版使用相同鲲鹏 920、GCC 静态构建、
+-输入和 `-threads 0`。完整命令：
++2026-09-26 从优化点 21 和 22 对应的 Git 提交重新导出干净源码，
++使用相同鲲鹏 920、GCC 静态配置和输入。两版都固定 16 个解码线程，
++避免早期自动线程补丁影响代码收益对照。完整命令：
+ 
+ ```bash
+-ffmpeg -nostdin -v fatal -threads 0 \
++ffmpeg -nostdin -v fatal -threads 16 \
+     -i /data/wanglimin/HEVC-720p-10min.mov \
+     -frames:v 15000 -an -sn -vf format=rgb24 -f null -
+ ```
+ 
+ | 交叉顺序 | 优化点 21 后 `real` | 再加本优化 `real` |
+ |---|---:|---:|
+-| 对照 → 本优化 | 29.859 s | 29.892 s |
+-| 本优化 → 对照 | 30.103 s | 29.326 s |
++| 对照 → 本优化 | 30.011 s | 30.460 s |
++| 本优化 → 对照 | 30.006 s | 29.470 s |
++
++单独叠加的均值仅下降 0.044 秒（约 0.14%），小于本次波动，
++**不能宣称本补丁单独有稳定收益**。原报告的 0.372 秒数字来自混有
++未提交试验代码的构建，已由以上干净构建结果取代。
++
++另一个同线程数交叉测试直接比较“21 + 23”和“21 + 22 + 23”：
++前者为 29.588/29.603 秒，后者为 28.866/28.623 秒，平均差约
++0.851 秒。这个结果支持保留 22 作为组合的一部分，但不能证明其
++单独收益，也不能据此断言具体的机器级因果机制。
+ 
+-均值约下降 0.372 秒（1.24%），但第一对略慢，收益幅度有波动。
+ 3000 帧 RGB24 `framemd5` 管道 SHA-256 与对照一致：
+ `9bf7a192699267ddfb6615887231209758dcdc695aa740c6ca75cb5f4709f792`。
+ 不把该收益直接外推到其他输入；20 秒目标尚未达到。
+diff --git a/docs/optimizations/hevc-720p-aarch64/23-hevc-coefficient-clamp.md b/docs/optimizations/hevc-720p-aarch64/23-hevc-coefficient-clamp.md
+index 4b435a9f5..0a3903295 100644
+--- a/docs/optimizations/hevc-720p-aarch64/23-hevc-coefficient-clamp.md
++++ b/docs/optimizations/hevc-720p-aarch64/23-hevc-coefficient-clamp.md
+@@ -17,21 +17,23 @@ trans_coeff_level = FFMAX(FFMIN(trans_coeff_level, 32767), -32768);
+ 
+ ## 验证
+ 
+-本优化单独叠加在优化点 21、22 后。两版都是鲲鹏 920 上的静态 GCC
+-构建，固定原 benchmark 的 `-threads 0`：
++2026-09-26 从优化点 22 和 23 对应的 Git 提交重新导出干净源码。
++两版都在鲲鹏 920 上使用相同 GCC 静态配置，并固定 16 个解码线程，
++排除仓库早期自动线程补丁对代码收益的影响：
+ 
+ ```bash
+-ffmpeg -nostdin -v fatal -threads 0 \
++ffmpeg -nostdin -v fatal -threads 16 \
+     -i /data/wanglimin/HEVC-720p-10min.mov \
+     -frames:v 15000 -an -sn -vf format=rgb24 -f null -
+ ```
+ 
+ | 交叉顺序 | 优化点 22 后 `real` | 再加本优化 `real` |
+ |---|---:|---:|
+-| 对照 → 本优化 | 29.384 s | 28.691 s |
+-| 本优化 → 对照 | 29.369 s | 28.674 s |
++| 对照 → 本优化 | 29.403 s | 28.715 s |
++| 本优化 → 对照 | 29.484 s | 28.840 s |
+ 
+-均值约下降 0.694 秒（2.36%）。3000 帧 RGB24 `framemd5` 管道
++均值约下降 0.666 秒（2.26%）。原报告的 `-threads 0` 数字来自混有
++未提交试验代码的构建，已由以上干净构建结果取代。3000 帧 RGB24 `framemd5` 管道
+ SHA-256 与对照相同：
+ `9bf7a192699267ddfb6615887231209758dcdc695aa740c6ca75cb5f4709f792`。
+ 独立测试“符号位无分支取反”未见收益，因此没有并入本提交。
+diff --git a/docs/optimizations/hevc-720p-aarch64/HEVC-720p-AArch64-opt21-23-report.md b/docs/optimizations/hevc-720p-aarch64/HEVC-720p-AArch64-opt21-23-report.md
+new file mode 100644
+index 000000000..63a8e5908
+--- /dev/null
++++ b/docs/optimizations/hevc-720p-aarch64/HEVC-720p-AArch64-opt21-23-report.md
+@@ -0,0 +1,76 @@
++# HEVC-720p 鲲鹏 920 代码优化续篇：有效补丁 21～23
++
++## 结论
++
++2026-09-26 更正：原报告中的二进制混入未提交的 QPEL 等试验代码，且
++`-threads 0` 会触发仓库早期 patch3 对自动 HEVC 帧线程数的修改；原先的
++30.599 → 28.684 秒不能作为“已提交代码、线程数不变”的可复现结论。
++
++现在从 Git 提交 `d6925b63a`（patch20）和 `8943fd041`（patch21～23）
++分别全新导出源码、使用相同 GCC 静态配置编译。在两个版本都显式固定
++`-threads 16` 时，进程均为 52 个线程，完整 15000 帧 `real` 平均
++从 30.360 秒降到 28.608 秒，改善 1.752 秒（5.77%）。这里没有把
++自动线程数变化、PGO 或未提交试验代码计为收益。
++
++| 交叉顺序 | patch20 `real` | patch21～23 `real` |
++|---|---:|---:|
++| patch20 → patch21～23 | 30.392 s | 28.602 s |
++| patch21～23 → patch20 | 30.327 s | 28.613 s |
++
++距离约 20 秒代码优化目标仍差约 8.6 秒，不能宣称已经实现两倍加速。
++已提交版本以原命令 `-threads 0` 跑出过 20.789 秒，但该运行实际有
++68 个进程线程，而固定 16 个解码线程的运行有 52 个；前者是自动线程
++策略的效果，不计入本报告代码优化收益。
++
++## 三个独立优化点
++
++| 补丁 | 原理 | 独立走读 |
++|---|---|---|
++| 21 | 显著系数索引无分支写入 | [21-hevc-significance-branchless.md](21-hevc-significance-branchless.md) |
++| 22 | 连续 CABAC 旁路位批量解码，异常情况回退逐位路径 | [22-hevc-cabac-bypass-batching.md](22-hevc-cabac-bypass-batching.md) |
++| 23 | 反量化系数直接饱和裁剪到 16-bit 范围 | [23-hevc-coefficient-clamp.md](23-hevc-coefficient-clamp.md) |
++
++三个代码补丁依次是
++`0021-avcodec-hevc-write-significance-indices-without-bran.patch`、
++`0022-avcodec-hevc-batch-CABAC-bypass-bins-for-coefficient.patch`、
++`0023-avcodec-hevc-clamp-dequantized-coefficients-directly.patch`，均位于
++`patches/hevc-720p-aarch64/`。在全新 patch20 工作树中依次 `git am`
++这三个补丁成功；不要用 `0021-*.patch` 通配，因为同目录另有未采纳的
++QPEL 试验补丁。随后用 `git apply`
++`0024-docs-add-corrected-HEVC-benchmark-report.patch` 添加本更正报告；
++0024 只改文档，不影响程序性能。
++
++## 复现与正确性
++
++测试输入：`/data/wanglimin/HEVC-720p-10min.mov`。同一台鲲鹏 920、
++相同 GCC 静态构建配置；为排除仓库早期自动线程补丁的影响，两版都用
++相同的 16 个解码线程。完整代码优化对照命令为：
++
++```bash
++ffmpeg -nostdin -v fatal -threads 16 \
++    -i /data/wanglimin/HEVC-720p-10min.mov \
++    -frames:v 15000 -an -sn -vf format=rgb24 -f null -
++```
++
++两版干净构建的完整 15000 帧 RGB24 `framemd5` 管道 SHA-256 均为：
++`ae62ca4ee03f9f4e7c5fa6997b82a9b5881ae318ff19f16881b16b65596630c2`。
++`git diff --check` 通过。仓库根目录没有 `codestyle` 文件，因此没有可运行的
++该项扫描器。
++
++单点复测（同样从对应提交取源码并固定 `-threads 16`）显示：patch21
++平均改善约 0.724 秒；patch22 单独仅约 0.044 秒，无法证明稳定收益；
++patch23 在 patch22 之后平均改善约 0.666 秒。不过，移除 patch22 后
++保留 patch21 与 patch23 的版本，完整交叉测试平均为 29.596 秒，
++而完整 patch21～23 为 28.745 秒，显示组合差异约 0.851 秒。
++因此 patch22 不应单独宣称有稳定收益，但这段视频上的组合仍有收益。
++
++本轮另试过 QPEL 七抽头零系数路径、EPEL 系数预加载、按实际非零列
++缩小 IDCT 范围以及去量化比例预计算；没有稳定的完整 `real` 收益，
++均未提交。
++
++## 边界与下一步
++
++当前视频上的正确性和性能已经覆盖 15000 帧；其他 HEVC 视频和不同编译器
++仍需分别复测，不能把上述数字直接外推。纯解码采样显示剩余热点主要在
++残差 CABAC、水平 QPEL/EPEL 插值及反变换，继续接近 20 秒需要更大的
++解码算法或向量化改动，而不是调整线程数。

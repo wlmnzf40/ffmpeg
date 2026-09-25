@@ -30,9 +30,15 @@
 | 22 | 连续 CABAC 旁路位批量解码，异常情况回退逐位路径 | [22-hevc-cabac-bypass-batching.md](22-hevc-cabac-bypass-batching.md) |
 | 23 | 反量化系数直接饱和裁剪到 16-bit 范围 | [23-hevc-coefficient-clamp.md](23-hevc-coefficient-clamp.md) |
 
-三个补丁分别位于 `patches/hevc-720p-aarch64/0021-*.patch`、
-`0022-*.patch`、`0023-*.patch`，按编号顺序应用于 patch20 后的源码。
-在全新 patch20 工作树中依次 `git am` 三个补丁成功。
+三个代码补丁依次是
+`0021-avcodec-hevc-write-significance-indices-without-bran.patch`、
+`0022-avcodec-hevc-batch-CABAC-bypass-bins-for-coefficient.patch`、
+`0023-avcodec-hevc-clamp-dequantized-coefficients-directly.patch`，均位于
+`patches/hevc-720p-aarch64/`。在全新 patch20 工作树中依次 `git am`
+这三个补丁成功；不要用 `0021-*.patch` 通配，因为同目录另有未采纳的
+QPEL 试验补丁。随后用 `git apply`
+`0024-docs-add-corrected-HEVC-benchmark-report.patch` 添加本更正报告；
+0024 只改文档，不影响程序性能。
 
 ## 复现与正确性
 
