@@ -957,10 +957,10 @@ static av_noinline int DecodeSignificantCoeffFlagsLocal(
     int cabacRange = cabac->range;
 
     for (int n = nEnd; n > 0; n--) {
-        if (get_cabac_local(cabac, &state[ctxIdxMap[n]],
-                            &cabacLow, &cabacRange)) {
-            significantCoeffFlagIdx[count++] = n;
-        }
+        int significantCoeff = get_cabac_local(cabac, &state[ctxIdxMap[n]],
+                                               &cabacLow, &cabacRange);
+        significantCoeffFlagIdx[count] = n;
+        count += significantCoeff;
     }
     cabac->low = cabacLow;
     cabac->range = cabacRange;
