@@ -17,21 +17,23 @@ trans_coeff_level = FFMAX(FFMIN(trans_coeff_level, 32767), -32768);
 
 ## 验证
 
-本优化单独叠加在优化点 21、22 后。两版都是鲲鹏 920 上的静态 GCC
-构建，固定原 benchmark 的 `-threads 0`：
+2026-09-26 从优化点 22 和 23 对应的 Git 提交重新导出干净源码。
+两版都在鲲鹏 920 上使用相同 GCC 静态配置，并固定 16 个解码线程，
+排除仓库早期自动线程补丁对代码收益的影响：
 
 ```bash
-ffmpeg -nostdin -v fatal -threads 0 \
+ffmpeg -nostdin -v fatal -threads 16 \
     -i /data/wanglimin/HEVC-720p-10min.mov \
     -frames:v 15000 -an -sn -vf format=rgb24 -f null -
 ```
 
 | 交叉顺序 | 优化点 22 后 `real` | 再加本优化 `real` |
 |---|---:|---:|
-| 对照 → 本优化 | 29.384 s | 28.691 s |
-| 本优化 → 对照 | 29.369 s | 28.674 s |
+| 对照 → 本优化 | 29.403 s | 28.715 s |
+| 本优化 → 对照 | 29.484 s | 28.840 s |
 
-均值约下降 0.694 秒（2.36%）。3000 帧 RGB24 `framemd5` 管道
+均值约下降 0.666 秒（2.26%）。原报告的 `-threads 0` 数字来自混有
+未提交试验代码的构建，已由以上干净构建结果取代。3000 帧 RGB24 `framemd5` 管道
 SHA-256 与对照相同：
 `9bf7a192699267ddfb6615887231209758dcdc695aa740c6ca75cb5f4709f792`。
 独立测试“符号位无分支取反”未见收益，因此没有并入本提交。
