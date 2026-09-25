@@ -54,4 +54,4 @@ time ./ffmpeg -nostdin -stats -hide_banner -threads 0 \
 预期 300 帧哈希为
 `903d4493e85b12ed85ee76a4683065ef602c2546f19a1fa807ad8c8ad7f60543`。
 性能数值必须在同一台机器、相同负载下交替复测；当前 Clang LTO 代表值为
-29.563 s，GCC 代表值为 30.516 s。
+29.563 s，应用 patch19 后的 GCC 代表值为 30.384 s。

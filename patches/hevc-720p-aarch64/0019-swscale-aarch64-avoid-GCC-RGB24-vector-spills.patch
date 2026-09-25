@@ -1,0 +1,84 @@
+From 737768356089525631d5166f4e34beb494a33221 Mon Sep 17 00:00:00 2001
+From: wanglimin40 <wanglimin40@huawei.com>
+Date: Fri, 25 Sep 2026 14:06:25 +0800
+Subject: [PATCH] swscale/aarch64: avoid GCC RGB24 vector spills
+
+---
+ libswscale/aarch64/output_rgb_neon.c | 48 ++++++++++++++++++++++------
+ 1 file changed, 38 insertions(+), 10 deletions(-)
+
+diff --git a/libswscale/aarch64/output_rgb_neon.c b/libswscale/aarch64/output_rgb_neon.c
+index 28c739e7f..4e1834be5 100644
+--- a/libswscale/aarch64/output_rgb_neon.c
++++ b/libswscale/aarch64/output_rgb_neon.c
+@@ -117,6 +117,24 @@ static av_always_inline uint8x16_t ConvertChannel(
+     return vcombine_u8(vqmovun_s16(low), vqmovun_s16(high));
+ }
+ 
++#if defined(__GNUC__) && !defined(__clang__)
++static av_always_inline void StoreRgb24Gcc(uint8_t *dest,
++                                           uint8x16_t red,
++                                           uint8x16_t green,
++                                           uint8x16_t blue)
++{
++    register uint8x16_t redReg __asm__("v0") = red;
++    register uint8x16_t greenReg __asm__("v1") = green;
++    register uint8x16_t blueReg __asm__("v2") = blue;
++
++    __asm__ volatile(
++        "st3 {%1.16b, %2.16b, %3.16b}, [%0]"
++        :
++        : "r"(dest), "w"(redReg), "w"(greenReg), "w"(blueReg)
++        : "memory");
++}
++#endif
++
+ void ff_yuv2rgb24_X_neon(SwsContext *c, const int16_t *lumFilter,
+                          const int16_t **lumSrc, int lumFilterSize,
+                          const int16_t *chrFilter,
+@@ -158,7 +176,9 @@ void ff_yuv2rgb24_X_neon(SwsContext *c, const int16_t *lumFilter,
+                                        yCoeff);
+         int32x4_t yBase3 = vmlaq_n_s32(tableBase,
+                                        vmovl_high_s16(lumaHigh), yCoeff);
+-        uint8x16x3_t rgb;
++        uint8x16_t red;
++        uint8x16_t green;
++        uint8x16_t blue;
+ 
+         ComputeChromaOffset(chromaV, c->rgbTableCrv, &redLow, &redHigh);
+         ComputeChromaOffset(chromaU, c->rgbTableCbu, &blueLow, &blueHigh);
+@@ -167,14 +187,22 @@ void ff_yuv2rgb24_X_neon(SwsContext *c, const int16_t *lumFilter,
+         ComputeChromaOffset(chromaV, c->rgbTableCgv,
+                             &greenVLow, &greenVHigh);
+ 
+-        rgb.val[0] = ConvertChannel(yBase0, yBase1, yBase2, yBase3,
+-                                    redLow, redHigh, yCoeff);
+-        rgb.val[1] = ConvertChannel(yBase0, yBase1, yBase2, yBase3,
+-                                    vaddq_s32(greenULow, greenVLow),
+-                                    vaddq_s32(greenUHigh, greenVHigh),
+-                                    yCoeff);
+-        rgb.val[2] = ConvertChannel(yBase0, yBase1, yBase2, yBase3,
+-                                    blueLow, blueHigh, yCoeff);
+-        vst3q_u8(dest + x * 3, rgb);
++        red = ConvertChannel(yBase0, yBase1, yBase2, yBase3,
++                             redLow, redHigh, yCoeff);
++        green = ConvertChannel(yBase0, yBase1, yBase2, yBase3,
++                               vaddq_s32(greenULow, greenVLow),
++                               vaddq_s32(greenUHigh, greenVHigh),
++                               yCoeff);
++        blue = ConvertChannel(yBase0, yBase1, yBase2, yBase3,
++                              blueLow, blueHigh, yCoeff);
++#if defined(__GNUC__) && !defined(__clang__)
++        StoreRgb24Gcc(dest + x * 3, red, green, blue);
++#else
++        {
++            uint8x16x3_t rgb = { { red, green, blue } };
++
++            vst3q_u8(dest + x * 3, rgb);
++        }
++#endif
+     }
+ }
+-- 
+2.43.0
+
